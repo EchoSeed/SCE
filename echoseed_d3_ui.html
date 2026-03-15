@@ -1,0 +1,1687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EchoSeed v4.2 — Interactive D3.js UI</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --purple: #bc8cff;
+    --cyan: #39d353;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  #header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  #header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+  }
+  #header h1 span { color: var(--accent); }
+
+  /* ── Controls ── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  button {
+    background: var(--border);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  button:hover { background: #484f58; }
+  button.active { background: var(--green); color: #000; border-color: var(--green); }
+  button.stop { background: var(--red); color: #fff; border-color: var(--red); }
+
+  .slider-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .slider-group input[type=range] {
+    width: 90px;
+    accent-color: var(--accent);
+  }
+
+  /* ── Main layout ── */
+  #main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Graph area ── */
+  #graph-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  #graph-container svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 320px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .sidebar-section {
+    border-bottom: 1px solid var(--border);
+    padding: 10px 12px;
+  }
+  .sidebar-section h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #8b949e;
+    letter-spacing: .5px;
+    margin-bottom: 6px;
+  }
+
+  /* ── Stats grid ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+  }
+  .stat-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    padding: 2px 0;
+  }
+  .stat-item .label { color: #8b949e; }
+  .stat-item .value { color: #fff; font-weight: 600; }
+  .stat-item .value.green { color: var(--green); }
+  .stat-item .value.yellow { color: var(--yellow); }
+  .stat-item .value.purple { color: var(--purple); }
+  .stat-item .value.cyan { color: var(--cyan); }
+  .stat-item .value.red { color: var(--red); }
+
+  /* ── Season indicator ── */
+  .season-bar {
+    display: flex;
+    gap: 2px;
+    margin-top: 4px;
+  }
+  .season-seg {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    transition: background .3s;
+  }
+  .season-seg.active-exploration { background: var(--accent); }
+  .season-seg.active-consolidation { background: var(--yellow); }
+  .season-seg.active-dormancy { background: var(--purple); }
+  .season-seg.active-renaissance { background: var(--green); }
+
+  /* ── Entropy chart ── */
+  #entropy-chart {
+    width: 100%;
+    height: 100px;
+  }
+  #entropy-chart svg { width: 100%; height: 100%; }
+
+  /* ── Log area ── */
+  #log-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-size: 11px;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    line-height: 1.5;
+  }
+  #log-container::-webkit-scrollbar { width: 6px; }
+  #log-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .log-entry { padding: 1px 0; }
+  .log-entry .gen { color: var(--accent); }
+  .log-entry .id { color: var(--yellow); }
+  .log-entry .tag { color: var(--green); }
+  .log-entry .season-log { color: var(--purple); font-weight: bold; }
+  .log-entry .reflex-log { color: var(--cyan); }
+  .log-entry .attractor-log { color: var(--red); }
+
+  /* ── Tooltip ── */
+  .tooltip {
+    position: absolute;
+    background: #1c2128;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 100;
+    max-width: 280px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+  }
+  .tooltip .tt-id { font-weight: bold; color: var(--accent); }
+  .tooltip .tt-tags { color: var(--green); margin: 4px 0; }
+  .tooltip .tt-entropy { color: var(--yellow); }
+  .tooltip .tt-ancestry { color: #8b949e; font-size: 11px; }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 10px;
+    color: #8b949e;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  /* ── Tabs ── */
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 8px;
+    font-size: 11px;
+    color: #8b949e;
+    cursor: pointer;
+    border-radius: 0;
+  }
+  .tab-btn:hover { color: var(--text); background: none; }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: none;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Glyph inspector ── */
+  #inspector {
+    padding: 10px 12px;
+    font-size: 12px;
+    overflow-y: auto;
+    max-height: 200px;
+  }
+  #inspector::-webkit-scrollbar { width: 6px; }
+  #inspector::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── View selector ── */
+  .view-modes {
+    display: flex;
+    gap: 4px;
+  }
+  .view-modes button {
+    font-size: 11px;
+    padding: 3px 10px;
+  }
+  .view-modes button.active {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+  }
+
+  /* ── Watermark ── */
+  .watermark {
+    position: absolute;
+    bottom: 8px;
+    right: 12px;
+    font-size: 11px;
+    color: #8b949e;
+    opacity: 0.38;
+    pointer-events: none;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ HEADER ═══════════════ -->
+<div id="header">
+  <h1>EchoSeed <span>v4.2</span> — Emergent Consciousness Architecture</h1>
+  <div class="controls">
+    <button id="btn-start" onclick="startEngine()">Start</button>
+    <button id="btn-stop" onclick="stopEngine()">Stop</button>
+    <div class="slider-group">
+      <label>Rate</label>
+      <input type="range" id="rate-slider" min="20" max="2000" value="200" step="10">
+      <span id="rate-label">200ms</span>
+    </div>
+    <div class="slider-group">
+      <label>Max Nodes</label>
+      <input type="range" id="max-nodes-slider" min="100" max="2000" value="500" step="50">
+      <span id="max-nodes-label">500</span>
+    </div>
+    <button id="btn-save" onclick="saveLogsToFile()">Export JSON</button>
+    <div class="view-modes">
+      <button class="active" id="view-force" onclick="setView('force')">Force</button>
+      <button id="view-radial" onclick="setView('radial')">Radial</button>
+      <button id="view-hierarchy" onclick="setView('hierarchy')">Tree</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ MAIN ═══════════════ -->
+<div id="main">
+  <div id="graph-container">
+    <svg id="graph-svg"></svg>
+    <div class="watermark">EchoSeed v4.2 · @Duhmeee</div>
+    <div class="tooltip" id="tooltip" style="display:none;"></div>
+  </div>
+
+  <div id="sidebar">
+    <!-- Stats -->
+    <div class="sidebar-section">
+      <h3>System Status</h3>
+      <div class="stats-grid">
+        <div class="stat-item"><span class="label">Generation</span><span class="value green" id="stat-gen">0</span></div>
+        <div class="stat-item"><span class="label">Season</span><span class="value purple" id="stat-season">exploration</span></div>
+        <div class="stat-item"><span class="label">Glyphs</span><span class="value" id="stat-glyphs">0</span></div>
+        <div class="stat-item"><span class="label">Nodes</span><span class="value" id="stat-nodes">0</span></div>
+        <div class="stat-item"><span class="label">Edges</span><span class="value" id="stat-edges">0</span></div>
+        <div class="stat-item"><span class="label">Attractors</span><span class="value yellow" id="stat-attractors">0</span></div>
+        <div class="stat-item"><span class="label">Dormant</span><span class="value cyan" id="stat-dormant">0</span></div>
+        <div class="stat-item"><span class="label">Reflex-Free</span><span class="value" id="stat-reflex-free">0</span></div>
+        <div class="stat-item"><span class="label">Avg Entropy</span><span class="value yellow" id="stat-avg-entropy">0</span></div>
+        <div class="stat-item"><span class="label">Season Progress</span><span class="value" id="stat-season-prog">0/1000</span></div>
+      </div>
+      <div class="season-bar">
+        <div class="season-seg" id="season-exploration" title="Exploration"></div>
+        <div class="season-seg" id="season-consolidation" title="Consolidation"></div>
+        <div class="season-seg" id="season-dormancy" title="Dormancy"></div>
+        <div class="season-seg" id="season-renaissance" title="Renaissance"></div>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="sidebar-section">
+      <h3>Legend</h3>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#ff6b6b"></div>Origin</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#4ecdc4"></div>Root</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ffe66d"></div>High Entropy</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#a8e6cf"></div>Low Entropy</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#bc8cff"></div>Reflex</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f0883e"></div>Attractor</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#39d353"></div>Renaissance</div>
+      </div>
+    </div>
+
+    <!-- Entropy chart -->
+    <div class="sidebar-section">
+      <h3>Entropy Over Time</h3>
+      <div id="entropy-chart"></div>
+    </div>
+
+    <!-- Tabs: Inspector / Log / Analysis -->
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('log')">Log</button>
+      <button class="tab-btn" onclick="switchTab('inspector')">Inspector</button>
+      <button class="tab-btn" onclick="switchTab('analysis')">Analysis</button>
+    </div>
+
+    <div id="tab-log" class="tab-content active">
+      <div id="log-container"></div>
+    </div>
+    <div id="tab-inspector" class="tab-content">
+      <div id="inspector"><span style="color:#8b949e">Click a node to inspect</span></div>
+    </div>
+    <div id="tab-analysis" class="tab-content">
+      <div id="analysis" style="padding:10px 12px;font-size:12px;overflow-y:auto;max-height:300px;">
+        <span style="color:#8b949e">Analysis runs every 500 generations</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  EchoSeed v4.2 — Complete JavaScript/D3.js Implementation  ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+// ===== CONSTANTS =====
+const MAX_RAM_GLYPHS   = 20000;
+const LOW_ENTROPY      = 100;
+const LOW_KEEP_PROB    = 0.025;
+const PRUNE_AFTER      = 250;
+const ATTRACTOR_THRESHOLD = 5;
+const DORMANCY_THRESHOLD  = 500;
+const REACTIVATION_PROBABILITY = 0.1;
+const SEASON_DURATION  = 1000;
+const EMBED_DIM        = 32;   // simplified embedding dimension
+
+// ===== ENUMS =====
+const ReflexType = Object.freeze({
+  DEFENSIVE:     'defensive',
+  EXPLORATORY:   'exploratory',
+  COLLABORATIVE: 'collaborative',
+  CONSOLIDATIVE: 'consolidative',
+  METAMORPHIC:   'metamorphic'
+});
+
+const SeasonalPhase = Object.freeze({
+  EXPLORATION:   'exploration',
+  CONSOLIDATION: 'consolidation',
+  DORMANCY:      'dormancy',
+  RENAISSANCE:   'renaissance'
+});
+const SEASONS = [SeasonalPhase.EXPLORATION, SeasonalPhase.CONSOLIDATION,
+                 SeasonalPhase.DORMANCY, SeasonalPhase.RENAISSANCE];
+
+// ===== CORE STATE =====
+let glyphLog        = [];
+let id2glyph        = {};
+let graphNodes      = new Map();   // id -> {id, entropy, tags, fit}
+let graphEdges      = [];          // [{source, target, weight}]
+let adjacency       = new Map();   // id -> Set of neighbor ids
+let glyphId         = 0;
+let generationCount = 0;
+let currentSeason   = SeasonalPhase.EXPLORATION;
+let seasonCounter   = 0;
+let seenSignatures  = new Set();
+let reflexFree      = [];
+let stagnantCounter = {};
+let conceptualAttractors = {};
+let temporalClusters     = {};
+let dormantGlyphs        = {};
+let running          = false;
+let animFrameId      = null;
+let lastStepTime     = 0;
+
+// Tag vocabulary for embeddings
+const BASE_TAGS = ['origin','flex','ghost','fractal','wild','mirror','unknown','stable'];
+const SEASONAL_TAGS = {
+  [SeasonalPhase.EXPLORATION]:   ['pioneer','venture','discover'],
+  [SeasonalPhase.CONSOLIDATION]: ['anchor','strengthen','unify'],
+  [SeasonalPhase.DORMANCY]:      ['rest','potential','dormant'],
+  [SeasonalPhase.RENAISSANCE]:   ['reborn','transformed','awakened']
+};
+const REFLEX_TAGS = ['reflex','preserve','stable','seek','novel','bridge','transform','evolve'];
+const MUTATION_TAGS = ['m_misc'];
+const ALL_KNOWN_TAGS = [...new Set([...BASE_TAGS, ...Object.values(SEASONAL_TAGS).flat(),
+                                    ...REFLEX_TAGS, ...MUTATION_TAGS])];
+
+// Pre-computed random vectors for tag embedding (deterministic seed per tag)
+const tagVectors = {};
+function seedRandom(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) { h = ((h << 5) - h + str.charCodeAt(i)) | 0; }
+  return function() { h = (h * 16807 + 0) % 2147483647; return (h & 0x7fffffff) / 0x7fffffff; };
+}
+
+function getTagVec(tag) {
+  if (!tagVectors[tag]) {
+    const rng = seedRandom('echoseed_' + tag);
+    const v = new Float32Array(EMBED_DIM);
+    for (let i = 0; i < EMBED_DIM; i++) v[i] = rng() * 2 - 1;
+    // normalize
+    let mag = 0;
+    for (let i = 0; i < EMBED_DIM; i++) mag += v[i] * v[i];
+    mag = Math.sqrt(mag) || 1;
+    for (let i = 0; i < EMBED_DIM; i++) v[i] /= mag;
+    tagVectors[tag] = v;
+  }
+  return tagVectors[tag];
+}
+
+function embed(tags) {
+  const vec = new Float32Array(EMBED_DIM);
+  if (tags.length === 0) return vec;
+  for (const t of tags) {
+    const tv = getTagVec(t);
+    for (let i = 0; i < EMBED_DIM; i++) vec[i] += tv[i];
+  }
+  for (let i = 0; i < EMBED_DIM; i++) vec[i] /= tags.length;
+  return vec;
+}
+
+function cosineDistance(a, b) {
+  let dot = 0, ma = 0, mb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    ma += a[i] * a[i];
+    mb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(ma) * Math.sqrt(mb);
+  if (denom === 0) return 1;
+  return 1 - dot / denom;
+}
+
+// ===== ID GENERATION =====
+function genId() {
+  glyphId++;
+  return 'g' + String(glyphId).padStart(4, '0');
+}
+
+// ===== RANDOM HELPERS =====
+function randInt(a, b) { return a + Math.floor(Math.random() * (b - a + 1)); }
+function choice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function sample(arr, k) {
+  const copy = arr.slice();
+  const n = Math.min(k, copy.length);
+  const result = [];
+  for (let i = 0; i < n; i++) {
+    const j = Math.floor(Math.random() * copy.length);
+    result.push(copy.splice(j, 1)[0]);
+  }
+  return result;
+}
+function weightedChoice(items, weights) {
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return items[i];
+  }
+  return items[items.length - 1];
+}
+
+// ===== TAG SYSTEM =====
+function randomTag() {
+  const all = [...BASE_TAGS, ...(SEASONAL_TAGS[currentSeason] || [])];
+  return choice(all);
+}
+
+// ===== ENTROPY =====
+function calcEntropy(g, gen) {
+  if (gen === undefined) gen = generationCount;
+  const base = g.tags.length * 42 + randInt(0, 58);
+  const genPressure = gen * 10;
+  const seasonalModifier = {
+    [SeasonalPhase.EXPLORATION]: 1.2,
+    [SeasonalPhase.CONSOLIDATION]: 0.8,
+    [SeasonalPhase.DORMANCY]: 0.6,
+    [SeasonalPhase.RENAISSANCE]: 1.5
+  };
+  return Math.floor(base + genPressure * (seasonalModifier[currentSeason] || 1.0));
+}
+
+// ===== NOVELTY =====
+function semanticNovelty(vec) {
+  if (glyphLog.length === 0) return 1.0;
+  const recent = glyphLog.slice(-500).filter(g => g != null);
+  if (recent.length === 0) return 1.0;
+  const s = sample(recent, Math.min(100, recent.length));
+  let maxDist = 0;
+  for (const g of s) {
+    const d = cosineDistance(vec, g.vec);
+    if (d > maxDist) maxDist = d;
+  }
+  return maxDist;
+}
+
+function productiveNovelty(g) {
+  let base = semanticNovelty(g.vec);
+  let bonus = 0;
+  for (const aid of (g.ancestry || [])) {
+    if (conceptualAttractors[aid]) bonus += 0.1;
+  }
+  return base + bonus;
+}
+
+// ===== INFLUENCE =====
+function getChildren(g) {
+  const children = [];
+  const neighbors = adjacency.get(g.id);
+  if (!neighbors) return children;
+  for (const nid of neighbors) {
+    const ng = id2glyph[nid];
+    if (ng && (ng.ancestry || []).includes(g.id)) children.push(ng);
+  }
+  return children;
+}
+
+function calculateCascadeDepth(g, visited, maxDepth) {
+  if (!visited) visited = new Set();
+  if (maxDepth === undefined) maxDepth = 7;
+  if (visited.has(g.id) || maxDepth <= 0) return 0;
+  visited.add(g.id);
+  const children = getChildren(g);
+  if (children.length === 0) return 1;
+  let max = 0;
+  for (const child of children) {
+    const d = calculateCascadeDepth(child, new Set(visited), maxDepth - 1);
+    if (d > max) max = d;
+  }
+  return 1 + max;
+}
+
+function calculateTemporalCoherence(parent, children) {
+  if (children.length === 0) return 0;
+  let successful = 0;
+  for (const child of children) {
+    const cc = getChildren(child);
+    if (cc.length > 0) successful++;
+  }
+  return successful / children.length;
+}
+
+function calculateCrossPollination(g) {
+  const neighbors = adjacency.get(g.id);
+  if (!neighbors || neighbors.size < 2) return 0;
+  const ns = [];
+  for (const nid of neighbors) {
+    const ng = id2glyph[nid];
+    if (ng) ns.push(ng);
+  }
+  if (ns.length < 2) return 0;
+  let total = 0, count = 0;
+  for (let i = 0; i < ns.length; i++) {
+    for (let j = i + 1; j < ns.length; j++) {
+      total += cosineDistance(ns[i].vec, ns[j].vec);
+      count++;
+    }
+  }
+  return count > 0 ? total / count : 0;
+}
+
+function calculateInfluence(g) {
+  if (!graphNodes.has(g.id)) return 0;
+  const children = getChildren(g);
+  if (children.length === 0) return 0;
+
+  const offNovelty = children.reduce((s, c) => s + productiveNovelty(c), 0) / children.length;
+  const allTags = new Set();
+  for (const c of children) for (const t of c.tags) allTags.add(t);
+  const tagDiv = allTags.size / Math.max(1, children.length);
+  const maxDepth = Math.max(...children.map(c => calculateCascadeDepth(c, new Set(), 5)), 0);
+  const tempCoherence = calculateTemporalCoherence(g, children);
+  const crossPoll = calculateCrossPollination(g);
+
+  return offNovelty * 0.35 + tagDiv * 0.25 + maxDepth * 0.15 +
+         tempCoherence * 0.15 + crossPoll * 0.10;
+}
+
+// ===== FITNESS =====
+function fitness(g) {
+  const sem = productiveNovelty(g);
+  const influence = calculateInfluence(g);
+  let seasonalBonus = 0;
+  if (currentSeason === SeasonalPhase.EXPLORATION && sem > 0.7) seasonalBonus = 50;
+  else if (currentSeason === SeasonalPhase.CONSOLIDATION && conceptualAttractors[g.id]) seasonalBonus = 75;
+  else if (currentSeason === SeasonalPhase.RENAISSANCE && g.tags.includes('renaissance')) seasonalBonus = 100;
+  return 200 * sem - g.entropy + 50 * influence + seasonalBonus;
+}
+
+// ===== SIGNATURE & NOVELTY CHECK =====
+function signature(g) {
+  return [...g.tags].sort().join(',') + '|' + Math.floor(g.entropy / 25);
+}
+
+function isNovel(g) {
+  if (g.entropy < LOW_ENTROPY) return Math.random() < LOW_KEEP_PROB;
+  const sig = signature(g);
+  if (seenSignatures.has(sig)) return false;
+  seenSignatures.add(sig);
+  return true;
+}
+
+// ===== GRAPH HELPERS =====
+function addNode(id, data) {
+  graphNodes.set(id, data);
+  if (!adjacency.has(id)) adjacency.set(id, new Set());
+}
+
+function addEdge(source, target, weight) {
+  graphEdges.push({ source, target, weight: weight || 1 });
+  if (!adjacency.has(source)) adjacency.set(source, new Set());
+  if (!adjacency.has(target)) adjacency.set(target, new Set());
+  adjacency.get(source).add(target);
+  adjacency.get(target).add(source);
+}
+
+function removeNode(id) {
+  graphNodes.delete(id);
+  const neighbors = adjacency.get(id);
+  if (neighbors) {
+    for (const nid of neighbors) {
+      const ns = adjacency.get(nid);
+      if (ns) ns.delete(id);
+    }
+  }
+  adjacency.delete(id);
+  graphEdges = graphEdges.filter(e => e.source !== id && e.target !== id);
+}
+
+// ===== STORE =====
+function maybeStore(g) {
+  g.vec = embed(g.tags);
+  if (isNovel(g)) {
+    glyphLog.push(g);
+    id2glyph[g.id] = g;
+    addNode(g.id, { entropy: g.entropy, tags: g.tags, fit: fitness(g) });
+    stagnantCounter[g.id] = 0;
+    if (!g.tags.includes('reflex')) reflexFree.push(g);
+    return true;
+  }
+  return false;
+}
+
+// ===== CREATE GLYPH =====
+function createGlyph() {
+  const numTags = randInt(1, 3);
+  const tagSet = new Set();
+  for (let i = 0; i < numTags; i++) tagSet.add(randomTag());
+  const g = {
+    id: genId(),
+    tags: [...tagSet],
+    entropy: 0,
+    ancestry: [],
+    generationBorn: generationCount
+  };
+  g.entropy = calcEntropy(g);
+  g.vec = embed(g.tags);
+  return g;
+}
+
+// ===== MUTATION =====
+function mutateTag(tags) {
+  if (tags.length < 2) return 'm_misc';
+  const [a, b] = sample(tags, 2);
+  if (currentSeason === SeasonalPhase.EXPLORATION) return a + '\u2192' + b;
+  if (currentSeason === SeasonalPhase.CONSOLIDATION) return a + '\u2227' + b;
+  return a + '+' + b;
+}
+
+// ===== SMART EDGE EXPLOSION =====
+function smartEdgeExplosion(child, parents) {
+  const parentIds = new Set(parents.map(p => p.id));
+  parentIds.add(child.id);
+  const candidates = glyphLog.filter(g => !parentIds.has(g.id));
+  if (candidates.length === 0) return;
+
+  const connections = [];
+
+  // Semantic similarity
+  const semCandidates = [];
+  for (const c of candidates) {
+    const sim = 1 - cosineDistance(child.vec, c.vec);
+    if (sim > 0.3 && sim < 0.8) semCandidates.push({ g: c, w: sim * 2 });
+  }
+  semCandidates.sort((a, b) => b.w - a.w);
+  connections.push(...semCandidates.slice(0, 5));
+
+  // Temporal sync
+  let tempCount = 0;
+  for (const c of candidates) {
+    if (temporalClusters[c.id] !== undefined) {
+      const diff = Math.abs(temporalClusters[c.id] - generationCount);
+      if (diff < 50) { connections.push({ g: c, w: 1.5 }); tempCount++; }
+      if (tempCount >= 3) break;
+    }
+  }
+
+  // Attractor connections
+  let attCount = 0;
+  for (const c of candidates) {
+    if (conceptualAttractors[c.id]) { connections.push({ g: c, w: 3.0 }); attCount++; }
+    if (attCount >= 2) break;
+  }
+
+  // Random
+  const randCandidates = sample(candidates, Math.min(3, candidates.length));
+  for (const c of randCandidates) connections.push({ g: c, w: 0.5 });
+
+  // Create edges (limit 15)
+  for (let i = 0; i < Math.min(15, connections.length); i++) {
+    const c = connections[i];
+    addEdge(child.id, c.g.id, c.w);
+    stagnantCounter[c.g.id] = 0;
+  }
+}
+
+// ===== COLLISION =====
+function collide(a, b) {
+  const childTags = new Set([...a.tags, ...b.tags, mutateTag([...a.tags, ...b.tags])]);
+  const child = {
+    id: genId(),
+    tags: [...childTags],
+    entropy: 0,
+    ancestry: [a.id, b.id],
+    generationBorn: generationCount
+  };
+  child.entropy = calcEntropy(child);
+  maybeStore(child);
+  addEdge(a.id, child.id);
+  addEdge(b.id, child.id);
+  stagnantCounter[a.id] = stagnantCounter[b.id] = stagnantCounter[child.id] = 0;
+  smartEdgeExplosion(child, [a, b]);
+  temporalClusters[child.id] = generationCount;
+}
+
+// ===== PARENT SELECTION =====
+function selectParents(k) {
+  if (k === undefined) k = 10;
+  const nodes = [...graphNodes.entries()];
+  if (nodes.length < 2) return [];
+
+  const items = [];
+  const weights = [];
+  for (const [nid, ndata] of nodes) {
+    let w = Math.max(1, ndata.fit || 1);
+    if (conceptualAttractors[nid]) w *= 2;
+    const g = id2glyph[nid];
+    if (g) {
+      if (currentSeason === SeasonalPhase.EXPLORATION && semanticNovelty(g.vec) > 0.5) w *= 1.5;
+      else if (currentSeason === SeasonalPhase.CONSOLIDATION && g.tags.length > 2) w *= 1.3;
+    }
+    items.push(nid);
+    weights.push(w);
+  }
+
+  const chosen = [];
+  for (let i = 0; i < Math.min(k, items.length); i++) {
+    chosen.push(weightedChoice(items, weights));
+  }
+  return chosen;
+}
+
+// ===== BATCH COLLIDE =====
+function batchCollide(maxPairs) {
+  if (maxPairs === undefined) maxPairs = 30;
+  const parents = selectParents(maxPairs);
+  if (parents.length < 2) return;
+  // Limit pair count for performance
+  const limit = Math.min(parents.length, 8);
+  for (let i = 0; i < limit; i++) {
+    for (let j = i + 1; j < limit; j++) {
+      const a = id2glyph[parents[i]];
+      const b = id2glyph[parents[j]];
+      if (a && b) collide(a, b);
+    }
+  }
+}
+
+// ===== REFLEX SYSTEM =====
+function findSemanticallyDistantGlyph(ref) {
+  if (glyphLog.length < 10) return null;
+  const candidates = sample(glyphLog, Math.min(50, glyphLog.length));
+  let best = null, bestDist = -1;
+  for (const g of candidates) {
+    const d = cosineDistance(ref.vec, g.vec);
+    if (d > bestDist) { bestDist = d; best = g; }
+  }
+  return best;
+}
+
+function determineReflexType(g, contextGlyphs) {
+  const avgEntropy = contextGlyphs.reduce((s, c) => s + c.entropy, 0) / Math.max(1, contextGlyphs.length);
+  const entropyRatio = g.entropy / Math.max(1, avgEntropy);
+  const semIso = semanticNovelty(g.vec);
+
+  if (entropyRatio < 0.5 && semIso < 0.3) return ReflexType.DEFENSIVE;
+  if (semIso > 0.8) return ReflexType.EXPLORATORY;
+  if (g.tags.length > 3 && entropyRatio > 1.2) return ReflexType.COLLABORATIVE;
+  if (conceptualAttractors[g.id]) return ReflexType.CONSOLIDATIVE;
+  return ReflexType.METAMORPHIC;
+}
+
+function createReflexGlyph(parent, reflexType) {
+  let newTags = [...parent.tags];
+  if (reflexType === ReflexType.DEFENSIVE) {
+    newTags.push('reflex', 'preserve', 'stable');
+  } else if (reflexType === ReflexType.EXPLORATORY) {
+    newTags.push('reflex', 'seek', 'novel', randomTag());
+  } else if (reflexType === ReflexType.COLLABORATIVE) {
+    const distant = findSemanticallyDistantGlyph(parent);
+    if (distant) newTags.push(...distant.tags.slice(0, 2), 'reflex', 'bridge');
+    else newTags.push('reflex', 'bridge');
+  } else if (reflexType === ReflexType.CONSOLIDATIVE) {
+    newTags.push('reflex', 'strengthen', 'anchor');
+  } else {
+    newTags = [mutateTag(parent.tags), 'reflex', 'transform', 'evolve'];
+  }
+
+  const g = {
+    id: genId(),
+    tags: [...new Set(newTags)],
+    entropy: 0,
+    ancestry: [parent.id],
+    generationBorn: generationCount,
+    reflexProfile: {
+      type: reflexType,
+      intensity: Math.random() * 0.5 + 0.5,
+      activationCount: 1,
+      lastActivation: generationCount
+    }
+  };
+  g.entropy = calcEntropy(g);
+  return g;
+}
+
+function reflexTest() {
+  const context = glyphLog.slice(-100);
+  const targets = glyphLog.filter(g => g.tags.includes('unknown') && g.entropy < 150);
+  // Limit to avoid performance issues
+  const limited = targets.slice(-5);
+
+  for (const g of limited) {
+    const reflexType = determineReflexType(g, context);
+    const count = reflexType === ReflexType.EXPLORATORY ? 3 : 2;
+
+    for (let i = 0; i < count; i++) {
+      const ng = createReflexGlyph(g, reflexType);
+      maybeStore(ng);
+      addEdge(g.id, ng.id);
+      collide(g, ng);
+    }
+
+    addLog(`<span class="reflex-log">Reflex [${reflexType}]</span> on ${g.id}`, 'reflex');
+  }
+}
+
+// ===== PRUNING =====
+function pruneStagnant() {
+  const toRemove = [];
+  const toDormant = [];
+
+  for (const [nid] of graphNodes) {
+    stagnantCounter[nid] = (stagnantCounter[nid] || 0) + 1;
+    if (stagnantCounter[nid] > PRUNE_AFTER) {
+      if (currentSeason === SeasonalPhase.DORMANCY &&
+          !conceptualAttractors[nid] &&
+          stagnantCounter[nid] < DORMANCY_THRESHOLD) {
+        toDormant.push(nid);
+      } else {
+        toRemove.push(nid);
+      }
+    }
+  }
+
+  for (const nid of toRemove) {
+    removeNode(nid);
+    delete stagnantCounter[nid];
+  }
+
+  for (const nid of toDormant) {
+    const g = id2glyph[nid];
+    if (g) {
+      dormantGlyphs[nid] = {
+        glyph: g,
+        dormancyStart: generationCount,
+        reactivationPotential: Math.random() * 0.7 + 0.2
+      };
+    }
+  }
+
+  const removeSet = new Set(toRemove);
+  for (const nid of toRemove) delete id2glyph[nid];
+  glyphLog = glyphLog.filter(g => !removeSet.has(g.id));
+}
+
+// ===== REWIRE =====
+function rewireShortcuts(pct) {
+  if (pct === undefined) pct = 0.05;
+  const nodes = [...graphNodes.keys()];
+  if (nodes.length < 3) return;
+  const sampleSize = Math.max(2, Math.floor(nodes.length * pct));
+  const s = sample(nodes, sampleSize);
+
+  for (const nid of s) {
+    const sg = id2glyph[nid];
+    if (!sg) continue;
+    const candidates = nodes.filter(n => n !== nid);
+    if (candidates.length === 0) continue;
+    const target = choice(candidates);
+    addEdge(nid, target);
+    stagnantCounter[nid] = 0;
+    stagnantCounter[target] = 0;
+  }
+}
+
+// ===== SEASONAL SYSTEM =====
+function updateSeasonalPhase() {
+  seasonCounter++;
+  if (seasonCounter >= SEASON_DURATION) {
+    seasonCounter = 0;
+    const idx = SEASONS.indexOf(currentSeason);
+    currentSeason = SEASONS[(idx + 1) % SEASONS.length];
+    addLog(`<span class="season-log">Season \u2192 ${currentSeason}</span> (Gen ${generationCount})`, 'season');
+
+    if (currentSeason === SeasonalPhase.DORMANCY) activateDormancyPhase();
+    else if (currentSeason === SeasonalPhase.RENAISSANCE) activateRenaissancePhase();
+  }
+}
+
+function activateDormancyPhase() {
+  let count = 0;
+  for (const [gid, g] of Object.entries(id2glyph)) {
+    if ((stagnantCounter[gid] || 0) > DORMANCY_THRESHOLD &&
+        !conceptualAttractors[gid] &&
+        calculateInfluence(g) < 0.1) {
+      dormantGlyphs[gid] = {
+        glyph: g,
+        dormancyStart: generationCount,
+        reactivationPotential: Math.random() * 0.7 + 0.1
+      };
+      delete id2glyph[gid];
+      glyphLog = glyphLog.filter(gl => gl.id !== gid);
+      count++;
+    }
+  }
+  if (count > 0) addLog(`Dormancy: ${count} glyphs entered sleep`, 'season');
+}
+
+function activateRenaissancePhase() {
+  const toReactivate = [];
+  for (const [gid, info] of Object.entries(dormantGlyphs)) {
+    if (Math.random() < info.reactivationPotential * REACTIVATION_PROBABILITY) {
+      toReactivate.push(gid);
+    }
+  }
+  for (const gid of toReactivate) {
+    const info = dormantGlyphs[gid];
+    delete dormantGlyphs[gid];
+    const g = info.glyph;
+    g.tags.push('renaissance');
+    g.entropy = calcEntropy(g);
+    g.vec = embed(g.tags);
+    id2glyph[gid] = g;
+    glyphLog.push(g);
+    addLog(`<span class="tag">Reactivated</span> ${gid} [${g.tags.join(', ')}]`, 'renaissance');
+  }
+}
+
+// ===== ATTRACTOR DETECTION =====
+function updateConceptualAttractors() {
+  const influenceRankings = {};
+  for (const [gid, g] of Object.entries(id2glyph)) {
+    const inf = calculateInfluence(g);
+    if (inf > 0) influenceRankings[gid] = inf;
+  }
+
+  const sorted = Object.entries(influenceRankings).sort((a, b) => b[1] - a[1]).slice(0, 50);
+  const ancestryCounts = {};
+  for (const [gid] of sorted) {
+    const g = id2glyph[gid];
+    if (g) {
+      for (const aid of (g.ancestry || [])) {
+        ancestryCounts[aid] = (ancestryCounts[aid] || 0) + 1;
+      }
+    }
+  }
+
+  for (const [aid, count] of Object.entries(ancestryCounts)) {
+    if (count >= ATTRACTOR_THRESHOLD) {
+      if (!conceptualAttractors[aid]) {
+        conceptualAttractors[aid] = {
+          discoveredGeneration: generationCount,
+          influenceEpisodes: []
+        };
+        addLog(`<span class="attractor-log">New Attractor:</span> ${aid}`, 'attractor');
+      }
+      conceptualAttractors[aid].influenceEpisodes.push(generationCount);
+    }
+  }
+}
+
+// ===== DEEP ANALYSIS =====
+function performDeepAnalysis() {
+  const el = document.getElementById('analysis');
+  let html = `<h3 style="color:var(--accent);margin-bottom:8px;">Analysis @ Gen ${generationCount}</h3>`;
+
+  // Network stats
+  html += `<div style="margin-bottom:8px;"><b>Network</b><br>`;
+  html += `Nodes: ${graphNodes.size} | Edges: ${graphEdges.length}<br>`;
+  const degrees = [];
+  for (const [, neighbors] of adjacency) degrees.push(neighbors.size);
+  const avgDeg = degrees.length > 0 ? (degrees.reduce((a, b) => a + b, 0) / degrees.length).toFixed(1) : '0';
+  html += `Avg Degree: ${avgDeg}</div>`;
+
+  // Seasonal stats
+  html += `<div style="margin-bottom:8px;"><b>Season:</b> ${currentSeason} (${seasonCounter}/${SEASON_DURATION})</div>`;
+
+  // Attractors
+  const aKeys = Object.keys(conceptualAttractors);
+  html += `<div style="margin-bottom:8px;"><b>Attractors (${aKeys.length})</b><br>`;
+  for (const aid of aKeys.slice(0, 10)) {
+    const g = id2glyph[aid];
+    if (g) html += `${aid}: [${g.tags.join(', ')}]<br>`;
+  }
+  html += `</div>`;
+
+  // Dormant
+  html += `<div style="margin-bottom:8px;"><b>Dormant:</b> ${Object.keys(dormantGlyphs).length}</div>`;
+
+  // Tag frequency
+  const tagFreq = {};
+  for (const g of glyphLog.slice(-500)) {
+    for (const t of g.tags) tagFreq[t] = (tagFreq[t] || 0) + 1;
+  }
+  const topTags = Object.entries(tagFreq).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  html += `<div><b>Top Tags (last 500)</b><br>`;
+  for (const [tag, count] of topTags) {
+    html += `<span style="color:var(--green)">${tag}</span>: ${count}<br>`;
+  }
+  html += `</div>`;
+
+  el.innerHTML = html;
+  addLog(`Deep analysis complete (Gen ${generationCount})`, 'analysis');
+}
+
+// ===== LOGGING =====
+const MAX_LOG_ENTRIES = 200;
+let logEntries = [];
+
+function addLog(msg, type) {
+  logEntries.push({ msg, type, gen: generationCount });
+  if (logEntries.length > MAX_LOG_ENTRIES) logEntries.shift();
+}
+
+function renderLog() {
+  const el = document.getElementById('log-container');
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  el.innerHTML = logEntries.slice(-80).map(e =>
+    `<div class="log-entry"><span class="gen">[${e.gen}]</span> ${e.msg}</div>`
+  ).join('');
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+// ===== GENERATION LOOP =====
+function generationStep() {
+  generationCount++;
+  updateSeasonalPhase();
+
+  // Create new glyph
+  const g = createGlyph();
+  const stored = maybeStore(g);
+  if (stored) {
+    addLog(`New <span class="id">${g.id}</span> [<span class="tag">${g.tags.join(', ')}</span>] e=${g.entropy}`);
+  }
+
+  // Batch collide (reduced for browser perf)
+  batchCollide(10);
+
+  // Reflex test (every 10 gens)
+  if (generationCount % 10 === 0) reflexTest();
+
+  // Prune (every 50 gens)
+  if (generationCount % 50 === 0) pruneStagnant();
+
+  // Rewire (every 25 gens)
+  if (generationCount % 25 === 0) rewireShortcuts();
+
+  // Update attractors (every 100 gens)
+  if (generationCount % 100 === 0) updateConceptualAttractors();
+
+  // Deep analysis (every 500 gens)
+  if (generationCount % 500 === 0 && glyphLog.length >= 100) performDeepAnalysis();
+
+  // Enforce max glyphs
+  if (glyphLog.length > MAX_RAM_GLYPHS) {
+    const excess = glyphLog.length - MAX_RAM_GLYPHS;
+    const removed = glyphLog.splice(0, excess);
+    for (const rg of removed) {
+      delete id2glyph[rg.id];
+      removeNode(rg.id);
+    }
+  }
+}
+
+// ===== ENGINE CONTROL =====
+function startEngine() {
+  if (running) return;
+  running = true;
+  document.getElementById('btn-start').classList.add('active');
+  document.getElementById('btn-stop').classList.remove('stop');
+
+  // Seed glyphs if empty
+  if (glyphLog.length === 0) {
+    for (let i = 0; i < 10; i++) {
+      const g = createGlyph();
+      maybeStore(g);
+    }
+    addLog(`Initialized with ${glyphLog.length} seed glyphs`);
+  }
+
+  lastStepTime = performance.now();
+  requestAnimationFrame(engineLoop);
+}
+
+function stopEngine() {
+  running = false;
+  document.getElementById('btn-start').classList.remove('active');
+  document.getElementById('btn-stop').classList.add('stop');
+  if (animFrameId) cancelAnimationFrame(animFrameId);
+}
+
+function engineLoop(timestamp) {
+  if (!running) return;
+  const rate = parseInt(document.getElementById('rate-slider').value);
+
+  if (timestamp - lastStepTime >= rate) {
+    // Run multiple steps per frame for faster rates
+    const steps = rate < 50 ? 5 : (rate < 100 ? 3 : 1);
+    for (let i = 0; i < steps; i++) generationStep();
+    lastStepTime = timestamp;
+
+    // Update UI every frame
+    updateStats();
+    updateEntropyChart();
+    renderLog();
+  }
+
+  // Update graph visualization at 30fps max
+  animFrameId = requestAnimationFrame(engineLoop);
+}
+
+// ===== STATS UI =====
+function updateStats() {
+  document.getElementById('stat-gen').textContent = generationCount;
+  document.getElementById('stat-season').textContent = currentSeason;
+  document.getElementById('stat-glyphs').textContent = glyphLog.length;
+  document.getElementById('stat-nodes').textContent = graphNodes.size;
+  document.getElementById('stat-edges').textContent = graphEdges.length;
+  document.getElementById('stat-attractors').textContent = Object.keys(conceptualAttractors).length;
+  document.getElementById('stat-dormant').textContent = Object.keys(dormantGlyphs).length;
+  document.getElementById('stat-reflex-free').textContent = reflexFree.length;
+  document.getElementById('stat-season-prog').textContent = `${seasonCounter}/${SEASON_DURATION}`;
+
+  if (glyphLog.length > 0) {
+    const avgE = (glyphLog.slice(-100).reduce((s, g) => s + g.entropy, 0) /
+                  Math.min(100, glyphLog.length)).toFixed(0);
+    document.getElementById('stat-avg-entropy').textContent = avgE;
+  }
+
+  // Season bar
+  for (const s of SEASONS) {
+    const el = document.getElementById('season-' + s);
+    el.className = 'season-seg' + (currentSeason === s ? ` active-${s}` : '');
+  }
+}
+
+// ===== ENTROPY CHART (D3) =====
+let entropyData = [];
+const ENTROPY_MAX_POINTS = 200;
+
+function updateEntropyChart() {
+  if (glyphLog.length === 0) return;
+
+  // Sample entropy data
+  if (generationCount % 5 === 0) {
+    const recent = glyphLog.slice(-50);
+    const avg = recent.reduce((s, g) => s + g.entropy, 0) / recent.length;
+    entropyData.push({ gen: generationCount, entropy: avg });
+    if (entropyData.length > ENTROPY_MAX_POINTS) entropyData.shift();
+  }
+
+  if (entropyData.length < 2) return;
+
+  const container = document.getElementById('entropy-chart');
+  const W = container.clientWidth;
+  const H = container.clientHeight || 100;
+  const margin = { top: 5, right: 5, bottom: 18, left: 30 };
+
+  d3.select('#entropy-chart svg').remove();
+  const svg = d3.select('#entropy-chart').append('svg')
+    .attr('width', W).attr('height', H);
+
+  const x = d3.scaleLinear()
+    .domain(d3.extent(entropyData, d => d.gen))
+    .range([margin.left, W - margin.right]);
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(entropyData, d => d.entropy) * 1.1])
+    .range([H - margin.bottom, margin.top]);
+
+  // Area
+  const area = d3.area()
+    .x(d => x(d.gen))
+    .y0(H - margin.bottom)
+    .y1(d => y(d.entropy))
+    .curve(d3.curveBasis);
+
+  svg.append('path')
+    .datum(entropyData)
+    .attr('fill', 'rgba(210,153,34,0.15)')
+    .attr('d', area);
+
+  // Line
+  const line = d3.line()
+    .x(d => x(d.gen))
+    .y(d => y(d.entropy))
+    .curve(d3.curveBasis);
+
+  svg.append('path')
+    .datum(entropyData)
+    .attr('fill', 'none')
+    .attr('stroke', '#d29922')
+    .attr('stroke-width', 1.5)
+    .attr('d', line);
+
+  // Axes
+  svg.append('g')
+    .attr('transform', `translate(0,${H - margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(4).tickSize(3))
+    .attr('font-size', '8px')
+    .attr('color', '#484f58');
+
+  svg.append('g')
+    .attr('transform', `translate(${margin.left},0)`)
+    .call(d3.axisLeft(y).ticks(3).tickSize(3))
+    .attr('font-size', '8px')
+    .attr('color', '#484f58');
+}
+
+// ===== D3 FORCE GRAPH =====
+let simulation = null;
+let currentView = 'force';
+let graphUpdateTimer = null;
+let d3Nodes = [];
+let d3Links = [];
+
+function initGraph() {
+  const svg = d3.select('#graph-svg');
+  const container = document.getElementById('graph-container');
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+
+  svg.attr('width', W).attr('height', H);
+
+  // Zoom
+  const zoom = d3.zoom()
+    .scaleExtent([0.1, 8])
+    .on('zoom', (e) => {
+      svg.select('g.graph-root').attr('transform', e.transform);
+    });
+  svg.call(zoom);
+
+  // Root group
+  svg.append('g').attr('class', 'graph-root');
+
+  // Arrow marker
+  svg.append('defs').append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 -5 10 10')
+    .attr('refX', 15)
+    .attr('refY', 0)
+    .attr('markerWidth', 6)
+    .attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,-5L10,0L0,5')
+    .attr('fill', '#30363d');
+
+  // Simulation
+  simulation = d3.forceSimulation()
+    .force('link', d3.forceLink().id(d => d.id).distance(40).strength(0.3))
+    .force('charge', d3.forceManyBody().strength(-60).distanceMax(300))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide().radius(8))
+    .alphaDecay(0.02)
+    .on('tick', ticked);
+
+  // Start graph update cycle
+  scheduleGraphUpdate();
+}
+
+function scheduleGraphUpdate() {
+  graphUpdateTimer = setInterval(updateGraphData, 1000);
+}
+
+function glyphColor(g) {
+  if (!g) return '#555';
+  if (g.tags.includes('origin')) return '#ff6b6b';
+  if (g.tags.includes('renaissance')) return '#39d353';
+  if (conceptualAttractors[g.id]) return '#f0883e';
+  if (g.tags.includes('reflex')) return '#bc8cff';
+  if ((g.ancestry || []).length === 0) return '#4ecdc4';
+  if (g.entropy > 300) return '#ffe66d';
+  return '#a8e6cf';
+}
+
+function glyphRadius(g) {
+  if (!g) return 4;
+  const base = 3;
+  if (conceptualAttractors[g.id]) return base + 5;
+  return base + Math.min(5, g.entropy / 100);
+}
+
+function updateGraphData() {
+  const maxNodes = parseInt(document.getElementById('max-nodes-slider').value);
+  const svg = d3.select('#graph-svg g.graph-root');
+
+  // Get recent nodes up to maxNodes
+  const recentGlyphs = glyphLog.slice(-maxNodes);
+  const nodeIds = new Set(recentGlyphs.map(g => g.id));
+
+  // Build node array
+  const existingPositions = {};
+  for (const n of d3Nodes) existingPositions[n.id] = { x: n.x, y: n.y };
+
+  d3Nodes = recentGlyphs.map(g => {
+    const existing = existingPositions[g.id];
+    return {
+      id: g.id,
+      glyph: g,
+      ...(existing || {})
+    };
+  });
+
+  // Build link array (only edges between visible nodes)
+  d3Links = [];
+  const seen = new Set();
+  for (const e of graphEdges) {
+    const src = typeof e.source === 'object' ? e.source.id : e.source;
+    const tgt = typeof e.target === 'object' ? e.target.id : e.target;
+    if (nodeIds.has(src) && nodeIds.has(tgt)) {
+      const key = src + '-' + tgt;
+      if (!seen.has(key)) {
+        seen.add(key);
+        d3Links.push({ source: src, target: tgt, weight: e.weight || 1 });
+      }
+    }
+  }
+
+  // Limit edges for performance
+  if (d3Links.length > 3000) {
+    d3Links = d3Links.slice(-3000);
+  }
+
+  // Update links
+  const link = svg.selectAll('line.link').data(d3Links, d => {
+    const s = typeof d.source === 'object' ? d.source.id : d.source;
+    const t = typeof d.target === 'object' ? d.target.id : d.target;
+    return s + '-' + t;
+  });
+  link.exit().remove();
+  link.enter().append('line')
+    .attr('class', 'link')
+    .attr('stroke', '#30363d')
+    .attr('stroke-width', 0.5)
+    .attr('stroke-opacity', 0.3);
+
+  // Update nodes
+  const node = svg.selectAll('circle.node').data(d3Nodes, d => d.id);
+  node.exit().remove();
+  const nodeEnter = node.enter().append('circle')
+    .attr('class', 'node')
+    .attr('stroke', '#0d1117')
+    .attr('stroke-width', 1)
+    .attr('cursor', 'pointer')
+    .call(d3.drag()
+      .on('start', dragStarted)
+      .on('drag', dragged)
+      .on('end', dragEnded))
+    .on('mouseover', (event, d) => showTooltip(event, d))
+    .on('mouseout', hideTooltip)
+    .on('click', (event, d) => inspectGlyph(d));
+
+  // Update all nodes' visual properties
+  svg.selectAll('circle.node')
+    .attr('r', d => glyphRadius(d.glyph))
+    .attr('fill', d => glyphColor(d.glyph));
+
+  // Restart simulation
+  simulation.nodes(d3Nodes);
+  simulation.force('link').links(d3Links);
+  simulation.alpha(0.15).restart();
+}
+
+function ticked() {
+  const svg = d3.select('#graph-svg g.graph-root');
+
+  svg.selectAll('line.link')
+    .attr('x1', d => d.source.x)
+    .attr('y1', d => d.source.y)
+    .attr('x2', d => d.target.x)
+    .attr('y2', d => d.target.y);
+
+  svg.selectAll('circle.node')
+    .attr('cx', d => d.x)
+    .attr('cy', d => d.y);
+}
+
+function dragStarted(event, d) {
+  if (!event.active) simulation.alphaTarget(0.3).restart();
+  d.fx = d.x;
+  d.fy = d.y;
+}
+function dragged(event, d) {
+  d.fx = event.x;
+  d.fy = event.y;
+}
+function dragEnded(event, d) {
+  if (!event.active) simulation.alphaTarget(0);
+  d.fx = null;
+  d.fy = null;
+}
+
+// ===== TOOLTIP =====
+function showTooltip(event, d) {
+  const g = d.glyph;
+  if (!g) return;
+  const tt = document.getElementById('tooltip');
+  tt.style.display = 'block';
+  tt.innerHTML = `
+    <div class="tt-id">${g.id}</div>
+    <div class="tt-tags">Tags: ${g.tags.join(', ')}</div>
+    <div class="tt-entropy">Entropy: ${g.entropy}</div>
+    <div class="tt-ancestry">Ancestry: ${(g.ancestry||[]).join(', ') || 'none'}</div>
+    ${g.reflexProfile ? `<div style="color:var(--purple)">Reflex: ${g.reflexProfile.type} (${g.reflexProfile.intensity.toFixed(2)})</div>` : ''}
+    ${conceptualAttractors[g.id] ? '<div style="color:var(--red)">Conceptual Attractor</div>' : ''}
+  `;
+  const rect = document.getElementById('graph-container').getBoundingClientRect();
+  tt.style.left = (event.clientX - rect.left + 15) + 'px';
+  tt.style.top = (event.clientY - rect.top - 10) + 'px';
+}
+
+function hideTooltip() {
+  document.getElementById('tooltip').style.display = 'none';
+}
+
+// ===== INSPECTOR =====
+function inspectGlyph(d) {
+  const g = d.glyph;
+  if (!g) return;
+  switchTab('inspector');
+
+  const children = getChildren(g);
+  const inf = calculateInfluence(g);
+  const nov = semanticNovelty(g.vec);
+  const fit = fitness(g);
+
+  document.getElementById('inspector').innerHTML = `
+    <div style="margin-bottom:8px;">
+      <span style="color:var(--accent);font-size:14px;font-weight:bold;">${g.id}</span>
+    </div>
+    <div><b>Tags:</b> <span style="color:var(--green)">${g.tags.join(', ')}</span></div>
+    <div><b>Entropy:</b> <span style="color:var(--yellow)">${g.entropy}</span></div>
+    <div><b>Generation Born:</b> ${g.generationBorn || 0}</div>
+    <div><b>Ancestry:</b> ${(g.ancestry||[]).join(', ') || 'none'}</div>
+    <div><b>Children:</b> ${children.length}</div>
+    <div><b>Influence:</b> ${inf.toFixed(3)}</div>
+    <div><b>Novelty:</b> ${nov.toFixed(3)}</div>
+    <div><b>Fitness:</b> ${fit.toFixed(1)}</div>
+    <div><b>Stagnant:</b> ${stagnantCounter[g.id] || 0} gens</div>
+    ${g.reflexProfile ? `
+    <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+      <b>Reflex Profile</b><br>
+      Type: <span style="color:var(--purple)">${g.reflexProfile.type}</span><br>
+      Intensity: ${g.reflexProfile.intensity.toFixed(2)}<br>
+      Activations: ${g.reflexProfile.activationCount}
+    </div>` : ''}
+    ${conceptualAttractors[g.id] ? `
+    <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+      <b style="color:var(--red)">Conceptual Attractor</b><br>
+      Discovered: Gen ${conceptualAttractors[g.id].discoveredGeneration}<br>
+      Influence Episodes: ${conceptualAttractors[g.id].influenceEpisodes.length}
+    </div>` : ''}
+    <div style="margin-top:8px;">
+      <b>Neighbors:</b> ${(adjacency.get(g.id) || new Set()).size}
+    </div>
+  `;
+}
+
+// ===== VIEW MODES =====
+function setView(mode) {
+  currentView = mode;
+  document.querySelectorAll('.view-modes button').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + mode).classList.add('active');
+
+  const container = document.getElementById('graph-container');
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+
+  if (mode === 'force') {
+    simulation
+      .force('center', d3.forceCenter(W / 2, H / 2))
+      .force('charge', d3.forceManyBody().strength(-60).distanceMax(300))
+      .force('link', d3.forceLink().id(d => d.id).distance(40).strength(0.3))
+      .force('x', null)
+      .force('y', null);
+  } else if (mode === 'radial') {
+    simulation
+      .force('center', null)
+      .force('charge', d3.forceManyBody().strength(-30).distanceMax(200))
+      .force('link', d3.forceLink().id(d => d.id).distance(30).strength(0.2))
+      .force('x', d3.forceX(W / 2).strength(0.05))
+      .force('y', d3.forceY(H / 2).strength(0.05));
+
+    // Position by generation
+    for (const n of d3Nodes) {
+      const g = n.glyph;
+      if (g) {
+        const angle = ((g.generationBorn || 0) / 100) * Math.PI * 2;
+        const r = 100 + (g.entropy || 0) * 0.5;
+        n.x = W / 2 + Math.cos(angle) * r;
+        n.y = H / 2 + Math.sin(angle) * r;
+      }
+    }
+  } else if (mode === 'hierarchy') {
+    simulation
+      .force('center', null)
+      .force('charge', d3.forceManyBody().strength(-40).distanceMax(200))
+      .force('link', d3.forceLink().id(d => d.id).distance(50).strength(0.5))
+      .force('x', d3.forceX(W / 2).strength(0.1))
+      .force('y', null);
+
+    // Position by ancestry depth
+    for (const n of d3Nodes) {
+      const g = n.glyph;
+      if (g) {
+        const depth = (g.ancestry || []).length;
+        n.y = 50 + depth * 80;
+      }
+    }
+    simulation.force('y', d3.forceY(d => {
+      const g = d.glyph;
+      return g ? 50 + (g.ancestry || []).length * 80 : H / 2;
+    }).strength(0.3));
+  }
+
+  simulation.alpha(0.8).restart();
+}
+
+// ===== TAB SWITCHING =====
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector(`.tab-btn[onclick="switchTab('${name}')"]`).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+// ===== EXPORT =====
+function saveLogsToFile() {
+  const data = glyphLog.map(g => ({
+    id: g.id,
+    tags: g.tags,
+    entropy: g.entropy,
+    ancestry: g.ancestry || [],
+    generationBorn: g.generationBorn || 0,
+    reflexProfile: g.reflexProfile || null
+  }));
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `echoseed_export_gen${generationCount}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  addLog(`Exported ${data.length} glyphs to JSON`);
+}
+
+// ===== SLIDER EVENTS =====
+document.getElementById('rate-slider').addEventListener('input', function() {
+  document.getElementById('rate-label').textContent = this.value + 'ms';
+});
+document.getElementById('max-nodes-slider').addEventListener('input', function() {
+  document.getElementById('max-nodes-label').textContent = this.value;
+});
+
+// ===== WINDOW RESIZE =====
+window.addEventListener('resize', () => {
+  const container = document.getElementById('graph-container');
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+  d3.select('#graph-svg').attr('width', W).attr('height', H);
+  if (simulation) {
+    simulation.force('center', d3.forceCenter(W / 2, H / 2));
+    simulation.alpha(0.3).restart();
+  }
+});
+
+// ===== INIT =====
+document.addEventListener('DOMContentLoaded', () => {
+  initGraph();
+});
+
+// If DOM already loaded
+if (document.readyState !== 'loading') {
+  initGraph();
+}
+</script>
+</body>
+</html>
