@@ -301,7 +301,7 @@
     </div>
     <div class="slider-group">
       <label>Max Nodes</label>
-      <input type="range" id="max-nodes-slider" min="100" max="2000" value="500" step="50">
+      <input type="range" id="max-nodes-slider" min="100" max="10000" value="500" step="50">
       <span id="max-nodes-label">500</span>
     </div>
     <button id="btn-save" onclick="saveLogsToFile()">Export JSON</button>
@@ -406,7 +406,7 @@ const EMBED_DIM        = 32;   // simplified embedding dimension
 // ===== ORIGIN CLAMPING =====
 const ORIGIN_CHILD_CAP      = 12;    // max direct children per origin node
 const ORIGIN_SPAWN_DECAY    = 0.92;  // multiplier per generation on origin spawn probability
-const ORIGIN_ENTROPY_GATE   = 80;    // min entropy required for origin to produce offspring
+const ORIGIN_ENTROPY_GATE_RATIO = 0.6; // origin must have entropy within this ratio of population avg
 
 // ===== ENUMS =====
 const ReflexType = Object.freeze({
@@ -545,10 +545,21 @@ function randomTag() {
 }
 
 // ===== ENTROPY =====
+// Population average entropy (updated each generation step)
+let populationAvgEntropy = 0;
+
+function updatePopulationAvgEntropy() {
+  if (glyphLog.length === 0) { populationAvgEntropy = 0; return; }
+  const recent = glyphLog.slice(-200);
+  populationAvgEntropy = recent.reduce((s, g) => s + g.entropy, 0) / recent.length;
+}
+
 function calcEntropy(g, gen) {
   if (gen === undefined) gen = generationCount;
   const base = g.tags.length * 42 + randInt(0, 58);
-  const genPressure = gen * 10;
+  // Logarithmic generation pressure — saturates instead of growing forever
+  // At gen 1: ~0, gen 100: ~461, gen 1000: ~691, gen 10000: ~921
+  const genPressure = Math.log(gen + 1) * 100;
   const seasonalModifier = {
     [SeasonalPhase.EXPLORATION]: 1.2,
     [SeasonalPhase.CONSOLIDATION]: 0.8,
@@ -803,8 +814,10 @@ function isOriginClamped(g) {
   if (originSpawnProb[g.id] === undefined) originSpawnProb[g.id] = 1.0;
   if (Math.random() > originSpawnProb[g.id]) return true;
 
-  // 3. Entropy gate: origin must meet minimum entropy to spawn
-  if (g.entropy < ORIGIN_ENTROPY_GATE) return true;
+  // 3. Relative entropy gate: origin must be within band of population average
+  //    If origin entropy is too far below the mean, it's stale and can't spawn
+  const gate = populationAvgEntropy * ORIGIN_ENTROPY_GATE_RATIO;
+  if (g.entropy < gate) return true;
 
   return false;
 }
@@ -1171,6 +1184,9 @@ function renderLog() {
 function generationStep() {
   generationCount++;
   updateSeasonalPhase();
+
+  // Update population average entropy for relative gating
+  updatePopulationAvgEntropy();
 
   // Decay origin spawn probabilities each generation
   for (const gid of Object.keys(originSpawnProb)) {
