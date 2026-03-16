@@ -347,15 +347,16 @@
 
     <!-- Legend -->
     <div class="sidebar-section">
-      <h3>Legend</h3>
+      <h3>Edge Legend (by tag relationship)</h3>
       <div class="legend">
-        <div class="legend-item"><div class="legend-dot" style="background:#ff6b6b"></div>Origin</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#4ecdc4"></div>Root</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#ffe66d"></div>High Entropy</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#a8e6cf"></div>Low Entropy</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#bc8cff"></div>Reflex</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#f0883e"></div>Attractor</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#39d353"></div>Renaissance</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#bc8cff"></div>Mirror</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#00e5ff"></div>Ghost</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ffe066"></div>Fractal</div>
+        <div class="legend-item"><div class="legend-dot" style="background:rgba(255,80,80,0.5)"></div>Origin (faint)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:rgba(255,255,255,0.6)"></div>New/Unknown</div>
+      </div>
+      <div class="legend" style="margin-top:4px;">
+        <div class="legend-item" style="font-style:italic;">Edge thickness = entropy delta</div>
       </div>
     </div>
 
@@ -402,6 +403,11 @@ const REACTIVATION_PROBABILITY = 0.1;
 const SEASON_DURATION  = 1000;
 const EMBED_DIM        = 32;   // simplified embedding dimension
 
+// ===== ORIGIN CLAMPING =====
+const ORIGIN_CHILD_CAP      = 12;    // max direct children per origin node
+const ORIGIN_SPAWN_DECAY    = 0.92;  // multiplier per generation on origin spawn probability
+const ORIGIN_ENTROPY_GATE   = 80;    // min entropy required for origin to produce offspring
+
 // ===== ENUMS =====
 const ReflexType = Object.freeze({
   DEFENSIVE:     'defensive',
@@ -439,6 +445,10 @@ let dormantGlyphs        = {};
 let running          = false;
 let animFrameId      = null;
 let lastStepTime     = 0;
+
+// Origin clamping state
+let originChildCount = {};   // id -> number of direct children spawned
+let originSpawnProb  = {};   // id -> current spawn probability (decays each gen)
 
 // Tag vocabulary for embeddings
 const BASE_TAGS = ['origin','flex','ghost','fractal','wild','mirror','unknown','stable'];
@@ -782,8 +792,34 @@ function smartEdgeExplosion(child, parents) {
   }
 }
 
+// ===== ORIGIN CLAMPING HELPERS =====
+function isOriginClamped(g) {
+  if (!g.tags.includes('origin')) return false;
+
+  // 1. Child cap: too many children already
+  if ((originChildCount[g.id] || 0) >= ORIGIN_CHILD_CAP) return true;
+
+  // 2. Spawn decay: probabilistic gating that decays over time
+  if (originSpawnProb[g.id] === undefined) originSpawnProb[g.id] = 1.0;
+  if (Math.random() > originSpawnProb[g.id]) return true;
+
+  // 3. Entropy gate: origin must meet minimum entropy to spawn
+  if (g.entropy < ORIGIN_ENTROPY_GATE) return true;
+
+  return false;
+}
+
+function trackOriginSpawn(parent, childId) {
+  if (parent.tags.includes('origin')) {
+    originChildCount[parent.id] = (originChildCount[parent.id] || 0) + 1;
+  }
+}
+
 // ===== COLLISION =====
 function collide(a, b) {
+  // Origin clamping: if either parent is a clamped origin, skip
+  if (isOriginClamped(a) || isOriginClamped(b)) return;
+
   const childTags = new Set([...a.tags, ...b.tags, mutateTag([...a.tags, ...b.tags])]);
   const child = {
     id: genId(),
@@ -797,6 +833,8 @@ function collide(a, b) {
   addEdge(a.id, child.id);
   addEdge(b.id, child.id);
   stagnantCounter[a.id] = stagnantCounter[b.id] = stagnantCounter[child.id] = 0;
+  trackOriginSpawn(a, child.id);
+  trackOriginSpawn(b, child.id);
   smartEdgeExplosion(child, [a, b]);
   temporalClusters[child.id] = generationCount;
 }
@@ -1134,6 +1172,11 @@ function generationStep() {
   generationCount++;
   updateSeasonalPhase();
 
+  // Decay origin spawn probabilities each generation
+  for (const gid of Object.keys(originSpawnProb)) {
+    originSpawnProb[gid] *= ORIGIN_SPAWN_DECAY;
+  }
+
   // Create new glyph
   const g = createGlyph();
   const stored = maybeStore(g);
@@ -1371,14 +1414,60 @@ function scheduleGraphUpdate() {
 }
 
 function glyphColor(g) {
-  if (!g) return '#555';
-  if (g.tags.includes('origin')) return '#ff6b6b';
-  if (g.tags.includes('renaissance')) return '#39d353';
-  if (conceptualAttractors[g.id]) return '#f0883e';
-  if (g.tags.includes('reflex')) return '#bc8cff';
-  if ((g.ancestry || []).length === 0) return '#4ecdc4';
-  if (g.entropy > 300) return '#ffe66d';
-  return '#a8e6cf';
+  // Nodes are now neutral — faint gray with slight brightness by entropy
+  if (!g) return '#333';
+  const brightness = Math.min(80, 40 + Math.floor(g.entropy / 20));
+  return `hsl(0, 0%, ${brightness}%)`;
+}
+
+// ===== EDGE COLOR BY TAG RELATIONSHIP =====
+function classifyEdge(sourceGlyph, targetGlyph) {
+  if (!sourceGlyph || !targetGlyph) return 'unknown';
+  const sTags = new Set(sourceGlyph.tags);
+  const tTags = new Set(targetGlyph.tags);
+
+  // Mirror: both share mirror tag, or child mirrors parent tags exactly
+  if (sTags.has('mirror') || tTags.has('mirror')) return 'mirror';
+  // Check for tag mirroring (child has ≥80% of parent tags)
+  if (sourceGlyph.tags.length > 0) {
+    const overlap = sourceGlyph.tags.filter(t => tTags.has(t)).length;
+    if (overlap / sourceGlyph.tags.length >= 0.8 && targetGlyph.tags.length >= sourceGlyph.tags.length) return 'mirror';
+  }
+
+  // Ghost: involves ghost tag
+  if (sTags.has('ghost') || tTags.has('ghost')) return 'ghost';
+
+  // Fractal: involves fractal tag or self-similar recursive pattern
+  if (sTags.has('fractal') || tTags.has('fractal')) return 'fractal';
+
+  // Origin inheritance: parent is origin or has origin tag
+  if (sTags.has('origin') || tTags.has('origin')) return 'origin';
+
+  // New/unknown: involves unknown or wild tags, or no clear relationship
+  if (sTags.has('unknown') || tTags.has('unknown') || sTags.has('wild') || tTags.has('wild')) return 'new';
+
+  return 'new';
+}
+
+const EDGE_COLORS = {
+  mirror:  '#bc8cff',  // purple
+  ghost:   '#00e5ff',  // cyan
+  fractal: '#ffe066',  // yellow
+  origin:  'rgba(255, 80, 80, 0.25)', // red, very faint
+  new:     'rgba(255, 255, 255, 0.45)', // white
+  unknown: 'rgba(255, 255, 255, 0.45)'
+};
+
+function edgeColor(sourceGlyph, targetGlyph) {
+  return EDGE_COLORS[classifyEdge(sourceGlyph, targetGlyph)] || EDGE_COLORS.new;
+}
+
+function edgeThickness(sourceGlyph, targetGlyph) {
+  // Thickness = entropy delta between parent and child, clamped
+  if (!sourceGlyph || !targetGlyph) return 0.5;
+  const delta = Math.abs(sourceGlyph.entropy - targetGlyph.entropy);
+  // Map delta to thickness: 0 → 0.3, 500+ → 4
+  return Math.max(0.3, Math.min(4, delta / 125));
 }
 
 function glyphRadius(g) {
@@ -1436,19 +1525,32 @@ function updateGraphData() {
     return s + '-' + t;
   });
   link.exit().remove();
-  link.enter().append('line')
-    .attr('class', 'link')
-    .attr('stroke', '#30363d')
-    .attr('stroke-width', 0.5)
-    .attr('stroke-opacity', 0.3);
+  const linkEnter = link.enter().append('line')
+    .attr('class', 'link');
+
+  // Color and size ALL edges by tag relationship and entropy delta
+  svg.selectAll('line.link').each(function(d) {
+    const sId = typeof d.source === 'object' ? d.source.id : d.source;
+    const tId = typeof d.target === 'object' ? d.target.id : d.target;
+    const sGlyph = id2glyph[sId];
+    const tGlyph = id2glyph[tId];
+    const classification = classifyEdge(sGlyph, tGlyph);
+    const color = EDGE_COLORS[classification] || EDGE_COLORS.new;
+    const thickness = edgeThickness(sGlyph, tGlyph);
+    const opacity = classification === 'origin' ? 0.2 : (classification === 'new' ? 0.4 : 0.65);
+    d3.select(this)
+      .attr('stroke', color)
+      .attr('stroke-width', thickness)
+      .attr('stroke-opacity', opacity);
+  });
 
   // Update nodes
   const node = svg.selectAll('circle.node').data(d3Nodes, d => d.id);
   node.exit().remove();
   const nodeEnter = node.enter().append('circle')
     .attr('class', 'node')
-    .attr('stroke', '#0d1117')
-    .attr('stroke-width', 1)
+    .attr('stroke', '#222')
+    .attr('stroke-width', 0.5)
     .attr('cursor', 'pointer')
     .call(d3.drag()
       .on('start', dragStarted)
