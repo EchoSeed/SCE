@@ -360,6 +360,7 @@
       <button class="active" id="color-domain" onclick="setColorMode('domain')">Domain</button>
       <button id="color-higgs" onclick="setColorMode('higgs')">Higgs</button>
     </div>
+    <button id="btn-filter" onclick="toggleIsolated()" title="Toggle isolated nodes">All Nodes</button>
     <div class="slider-group">
       <label>Snapshot</label>
       <input type="range" id="snapshot-slider" min="0" max="0" value="0" step="1" style="width:100px;">
@@ -551,6 +552,7 @@ let lastStepTime     = 0;
 let latticeSeed      = '';       // conceptual seed for root nodes
 let snapshotGen      = null;     // null = live, number = frozen at generation
 let colorMode        = 'domain'; // 'domain' or 'higgs'
+let showIsolated     = true;     // false = only show nodes with connections
 
 // Origin clamping state
 let originChildCount = {};   // id -> number of direct children spawned
@@ -1557,6 +1559,18 @@ function setColorMode(mode) {
   }
 }
 
+function toggleIsolated() {
+  showIsolated = !showIsolated;
+  const btn = document.getElementById('btn-filter');
+  btn.textContent = showIsolated ? 'All Nodes' : 'Connected';
+  if (showIsolated) {
+    btn.classList.remove('active');
+  } else {
+    btn.classList.add('active');
+  }
+  updateGraphData();
+}
+
 function engineLoop(timestamp) {
   if (!running) return;
   const rate = parseInt(document.getElementById('rate-slider').value);
@@ -1855,8 +1869,32 @@ function updateGraphData() {
   if (snapshotGen !== null) {
     pool = glyphLog.filter(g => (g.generationBorn || 0) <= snapshotGen);
   }
-  const recentGlyphs = pool.slice(-maxNodes);
-  const nodeIds = new Set(recentGlyphs.map(g => g.id));
+  let recentGlyphs = pool.slice(-maxNodes);
+  let nodeIds = new Set(recentGlyphs.map(g => g.id));
+
+  // Build links first (dedup, only between visible nodes)
+  const links = [];
+  const seen = new Set();
+  const connectedIds = new Set();
+  for (const e of graphEdges) {
+    const src = typeof e.source === 'object' ? e.source.id : e.source;
+    const tgt = typeof e.target === 'object' ? e.target.id : e.target;
+    if (nodeIds.has(src) && nodeIds.has(tgt)) {
+      const key = src + '-' + tgt;
+      if (!seen.has(key)) {
+        seen.add(key);
+        links.push({ source: src, target: tgt });
+        connectedIds.add(src);
+        connectedIds.add(tgt);
+      }
+    }
+  }
+
+  // Filter to connected-only when toggle is off
+  if (!showIsolated) {
+    recentGlyphs = recentGlyphs.filter(g => connectedIds.has(g.id));
+    nodeIds = connectedIds;
+  }
 
   // Build nodes — preserve existing positions
   const existingById = {};
@@ -1870,21 +1908,6 @@ function updateGraphData() {
     if (existing) { node.x = existing.x; node.y = existing.y; node.z = existing.z; }
     return node;
   });
-
-  // Build links (dedup, only between visible nodes)
-  const links = [];
-  const seen = new Set();
-  for (const e of graphEdges) {
-    const src = typeof e.source === 'object' ? e.source.id : e.source;
-    const tgt = typeof e.target === 'object' ? e.target.id : e.target;
-    if (nodeIds.has(src) && nodeIds.has(tgt)) {
-      const key = src + '-' + tgt;
-      if (!seen.has(key)) {
-        seen.add(key);
-        links.push({ source: src, target: tgt });
-      }
-    }
-  }
 
   // Performance cap
   const cappedLinks = links.length > 1500 ? links.slice(-1500) : links;
