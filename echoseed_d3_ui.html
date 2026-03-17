@@ -393,6 +393,8 @@
         <div class="stat-item"><span class="label">Dormant</span><span class="value cyan" id="stat-dormant">0</span></div>
         <div class="stat-item"><span class="label">Reflex-Free</span><span class="value" id="stat-reflex-free">0</span></div>
         <div class="stat-item"><span class="label">Avg Entropy</span><span class="value yellow" id="stat-avg-entropy">0</span></div>
+        <div class="stat-item"><span class="label">Unique Tags</span><span class="value green" id="stat-unique-tags">0</span></div>
+        <div class="stat-item"><span class="label">Tag Combos</span><span class="value cyan" id="stat-tag-combos">0</span></div>
         <div class="stat-item"><span class="label">Season Progress</span><span class="value" id="stat-season-prog">0/100</span></div>
         <div class="stat-item"><span class="label">Higgs Field</span><span class="value" id="stat-higgs" style="font-weight:bold;">0.0000</span></div>
         <div class="stat-item"><span class="label">Higgs State</span><span class="value" id="stat-higgs-state">CRITICAL</span></div>
@@ -546,6 +548,10 @@ let stagnantCounter = {};
 let conceptualAttractors = {};
 let temporalClusters     = {};
 let dormantGlyphs        = {};
+// Tag tracking — unique tags and tag combinations
+let uniqueTags      = new Set();   // all individual tags ever seen
+let tagCombos       = new Map();   // sorted combo key -> { count, firstSeen (gen), glyphIds[] }
+
 let running          = false;
 let animFrameId      = null;
 let lastStepTime     = 0;
@@ -844,6 +850,27 @@ function isNovel(g) {
   return true;
 }
 
+// ===== TAG REGISTRY =====
+function tagComboKey(tags) {
+  return [...tags].sort().join('+');
+}
+
+function registerTags(g) {
+  const key = tagComboKey(g.tags);
+  g.tagComboKey = key;
+  // Track individual tags
+  for (const t of g.tags) uniqueTags.add(t);
+  // Track combo
+  if (!tagCombos.has(key)) {
+    tagCombos.set(key, { count: 0, firstSeen: generationCount, glyphIds: [] });
+  }
+  const entry = tagCombos.get(key);
+  entry.count++;
+  entry.glyphIds.push(g.id);
+  // Keep glyphIds from growing unbounded
+  if (entry.glyphIds.length > 50) entry.glyphIds = entry.glyphIds.slice(-50);
+}
+
 // ===== GRAPH HELPERS =====
 function addNode(id, data) {
   graphNodes.set(id, data);
@@ -878,6 +905,7 @@ function maybeStore(g) {
   if (g.higgs == null) g.higgs = HIGGS(g.id);
   if (g.resonance_src === undefined) g.resonance_src = null;
   if (isNovel(g)) {
+    registerTags(g);
     glyphLog.push(g);
     id2glyph[g.id] = g;
     addNode(g.id, { entropy: g.entropy, tags: g.tags, fit: fitness(g) });
@@ -1401,6 +1429,17 @@ function performDeepAnalysis() {
   }
   html += `</div>`;
 
+  // Tag combo tracking
+  const topCombos = [...tagCombos.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 10);
+  html += `<div style="margin-top:8px;"><b>Top Tag Combos (${tagCombos.size} unique)</b><br>`;
+  for (const [key, info] of topCombos) {
+    html += `<span style="color:var(--cyan)">${key}</span>: ${info.count} <span style="color:#8b949e">(gen ${info.firstSeen})</span><br>`;
+  }
+  html += `<div style="margin-top:4px;color:#8b949e;">Unique tags seen: ${uniqueTags.size} / ${ALL_PHYSICS_TAGS.length}</div>`;
+  html += `</div>`;
+
   el.innerHTML = html;
   addLog(`Deep analysis complete (Gen ${generationCount})`, 'analysis');
 }
@@ -1608,6 +1647,10 @@ function updateStats() {
                   Math.min(100, glyphLog.length)).toFixed(0);
     document.getElementById('stat-avg-entropy').textContent = avgE;
   }
+
+  // Tag tracking stats
+  document.getElementById('stat-unique-tags').textContent = uniqueTags.size;
+  document.getElementById('stat-tag-combos').textContent = tagCombos.size;
 
   // Higgs field — show value for next node that would be created
   const nextHiggs = HIGGS(glyphId);
@@ -1929,6 +1972,7 @@ function showTooltip3D(node) {
     <div style="color:${domainColor};font-size:10px;margin-bottom:3px;">${domain.toUpperCase()}</div>
     <div class="tt-higgs" style="color:${hc}">Higgs: ${g.higgs != null ? ((g.higgs >= 0 ? '+' : '') + g.higgs) : '?'} — ${higgsLabel(g.higgs || 0)}</div>
     <div class="tt-tags">Tags: ${g.tags.join(', ')}</div>
+    <div style="color:#8b949e;font-size:9px;">Combo: ${g.tagComboKey || tagComboKey(g.tags)}</div>
     <div class="tt-entropy">Entropy: ${g.entropy}</div>
     <div class="tt-ancestry">Ancestry: ${(g.ancestry||[]).join(', ') || 'none'}</div>
     ${resSrc ? `<div class="tt-resonance">Resonant: [${resSrc.id}] ${resSrc.tags.slice(0,3).join(', ')}</div>` : ''}
@@ -1962,6 +2006,8 @@ function inspectGlyph(node) {
       <span style="color:var(--accent);font-size:14px;font-weight:bold;">${g.id}</span>
     </div>
     <div><b>Tags:</b> <span style="color:var(--green)">${g.tags.join(', ')}</span></div>
+    <div><b>Combo:</b> <span style="color:var(--cyan)">${g.tagComboKey || tagComboKey(g.tags)}</span>
+      ${tagCombos.has(g.tagComboKey || tagComboKey(g.tags)) ? `<span style="color:#8b949e;"> (${tagCombos.get(g.tagComboKey || tagComboKey(g.tags)).count} glyphs)</span>` : ''}</div>
     <div><b>Entropy:</b> <span style="color:var(--yellow)">${g.entropy}</span></div>
     <div style="margin-top:4px;padding:4px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
       <b>Higgs:</b> <span style="color:${hc};font-weight:bold;">${g.higgs != null ? ((g.higgs >= 0 ? '+' : '') + g.higgs) : '?'}</span>
@@ -2097,7 +2143,8 @@ function saveLogsToFile() {
     generationBorn: g.generationBorn || 0,
     resonance_src: g.resonance_src ?? null,
     reflexProfile: g.reflexProfile || null,
-    seed: g.seed || null
+    seed: g.seed || null,
+    tagComboKey: g.tagComboKey || tagComboKey(g.tags)
   }));
 
   const avgHiggs = glyphs.length
@@ -2117,8 +2164,11 @@ function saveLogsToFile() {
         Math.max(...glyphs.map(g => g.higgs))
       ] : [0, 0],
       seed: latticeSeed || null,
-      season: currentSeason
+      season: currentSeason,
+      unique_tags: uniqueTags.size,
+      unique_tag_combos: tagCombos.size
     },
+    tag_combos: Object.fromEntries([...tagCombos.entries()].map(([k, v]) => [k, { count: v.count, firstSeen: v.firstSeen }])),
     glyphs
   };
 
