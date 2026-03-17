@@ -3,8 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EchoSeed v4.2 — Interactive D3.js UI</title>
+<title>EchoSeed v4.2 — Interactive 3D UI</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
 <style>
   :root {
     --bg: #0d1117;
@@ -94,9 +96,12 @@
     position: relative;
     overflow: hidden;
   }
-  #graph-container svg {
+  #3d-graph {
     width: 100%;
     height: 100%;
+  }
+  #3d-graph canvas {
+    display: block;
   }
 
   /* ── Sidebar ── */
@@ -316,7 +321,7 @@
 <!-- ═══════════════ MAIN ═══════════════ -->
 <div id="main">
   <div id="graph-container">
-    <svg id="graph-svg"></svg>
+    <div id="3d-graph"></div>
     <div class="watermark">EchoSeed v4.2 · @Duhmeee</div>
     <div class="tooltip" id="tooltip" style="display:none;"></div>
   </div>
@@ -1375,116 +1380,73 @@ function updateEntropyChart() {
     .attr('color', '#484f58');
 }
 
-// ===== D3 FORCE GRAPH =====
-let simulation = null;
+// ===== forceZ polyfill (d3-force only has forceX/Y, 3D needs Z) =====
+if (!d3.forceZ) {
+  d3.forceZ = function(z) {
+    let strength = 0.1, nodes;
+    let zAccessor = typeof z === 'function' ? z : () => (z || 0);
+    function force(alpha) {
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        n.vz += (zAccessor(n) - (n.z || 0)) * strength * alpha;
+      }
+    }
+    force.initialize = function(_) { nodes = _; };
+    force.strength = function(s) { if (!arguments.length) return strength; strength = +s; return force; };
+    force.z = function(f) { if (!arguments.length) return zAccessor; zAccessor = typeof f === 'function' ? f : () => +f; return force; };
+    return force;
+  };
+}
+
+// ===== 3D FORCE GRAPH =====
+let graph3d = null;
 let currentView = 'force';
 let graphUpdateTimer = null;
-let d3Nodes = [];
-let d3Links = [];
+let currentGraphData = { nodes: [], links: [] };
 
-function initGraph() {
-  const svg = d3.select('#graph-svg');
-  const container = document.getElementById('graph-container');
-  const W = container.clientWidth;
-  const H = container.clientHeight;
-
-  svg.attr('width', W).attr('height', H);
-
-  // Zoom
-  const zoom = d3.zoom()
-    .scaleExtent([0.1, 8])
-    .on('zoom', (e) => {
-      svg.select('g.graph-root').attr('transform', e.transform);
-    });
-  svg.call(zoom);
-
-  // Root group
-  svg.append('g').attr('class', 'graph-root');
-
-  // Arrow marker
-  svg.append('defs').append('marker')
-    .attr('id', 'arrow')
-    .attr('viewBox', '0 -5 10 10')
-    .attr('refX', 15)
-    .attr('refY', 0)
-    .attr('markerWidth', 6)
-    .attr('markerHeight', 6)
-    .attr('orient', 'auto')
-    .append('path')
-    .attr('d', 'M0,-5L10,0L0,5')
-    .attr('fill', '#30363d');
-
-  // Simulation
-  simulation = d3.forceSimulation()
-    .force('link', d3.forceLink().id(d => d.id).distance(40).strength(0.3))
-    .force('charge', d3.forceManyBody().strength(-60).distanceMax(300))
-    .force('center', d3.forceCenter(W / 2, H / 2))
-    .force('collision', d3.forceCollide().radius(8))
-    .alphaDecay(0.02)
-    .on('tick', ticked);
-
-  // Start graph update cycle
-  scheduleGraphUpdate();
-}
-
-function scheduleGraphUpdate() {
-  graphUpdateTimer = setInterval(updateGraphData, 1000);
-}
+// ── Styling helpers (preserved from D3 version) ──
 
 function glyphColor(g) {
-  // Nodes are now neutral — faint gray with slight brightness by entropy
-  if (!g) return '#333';
+  if (!g) return '#333333';
   const brightness = Math.min(80, 40 + Math.floor(g.entropy / 20));
-  return `hsl(0, 0%, ${brightness}%)`;
+  // Convert HSL grayscale to hex for Three.js
+  const v = Math.round(brightness * 2.55);
+  return '#' + v.toString(16).padStart(2, '0').repeat(3);
 }
 
-// ===== EDGE COLOR BY TAG RELATIONSHIP =====
 function classifyEdge(sourceGlyph, targetGlyph) {
   if (!sourceGlyph || !targetGlyph) return 'unknown';
   const sTags = new Set(sourceGlyph.tags);
   const tTags = new Set(targetGlyph.tags);
-
-  // Mirror: both share mirror tag, or child mirrors parent tags exactly
   if (sTags.has('mirror') || tTags.has('mirror')) return 'mirror';
-  // Check for tag mirroring (child has ≥80% of parent tags)
   if (sourceGlyph.tags.length > 0) {
     const overlap = sourceGlyph.tags.filter(t => tTags.has(t)).length;
     if (overlap / sourceGlyph.tags.length >= 0.8 && targetGlyph.tags.length >= sourceGlyph.tags.length) return 'mirror';
   }
-
-  // Ghost: involves ghost tag
   if (sTags.has('ghost') || tTags.has('ghost')) return 'ghost';
-
-  // Fractal: involves fractal tag or self-similar recursive pattern
   if (sTags.has('fractal') || tTags.has('fractal')) return 'fractal';
-
-  // Origin inheritance: parent is origin or has origin tag
   if (sTags.has('origin') || tTags.has('origin')) return 'origin';
-
-  // New/unknown: involves unknown or wild tags, or no clear relationship
   if (sTags.has('unknown') || tTags.has('unknown') || sTags.has('wild') || tTags.has('wild')) return 'new';
-
   return 'new';
 }
 
 const EDGE_COLORS = {
-  mirror:  '#bc8cff',  // purple
-  ghost:   '#00e5ff',  // cyan
-  fractal: '#ffe066',  // yellow
-  origin:  'rgba(255, 80, 80, 0.25)', // red, very faint
-  new:     'rgba(255, 255, 255, 0.45)', // white
-  unknown: 'rgba(255, 255, 255, 0.45)'
+  mirror:  '#bc8cff',
+  ghost:   '#00e5ff',
+  fractal: '#ffe066',
+  origin:  '#ff5050',
+  new:     '#737373',
+  unknown: '#737373'
 };
 
-function edgeColor(sourceGlyph, targetGlyph) {
-  return EDGE_COLORS[classifyEdge(sourceGlyph, targetGlyph)] || EDGE_COLORS.new;
-}
+const EDGE_OPACITY = {
+  mirror: 0.65, ghost: 0.65, fractal: 0.65,
+  origin: 0.2, new: 0.4, unknown: 0.4
+};
 
 function edgeThickness(sourceGlyph, targetGlyph) {
-  // Thickness = entropy delta between parent and child, clamped
   if (!sourceGlyph || !targetGlyph) return 0.5;
   const delta = Math.abs(sourceGlyph.entropy - targetGlyph.entropy);
-  // Map delta to thickness: 0 → 0.3, 500+ → 4
   return Math.max(0.3, Math.min(4, delta / 125));
 }
 
@@ -1495,29 +1457,90 @@ function glyphRadius(g) {
   return base + Math.min(5, g.entropy / 100);
 }
 
-function updateGraphData() {
-  const maxNodes = parseInt(document.getElementById('max-nodes-slider').value);
-  const svg = d3.select('#graph-svg g.graph-root');
+// ── Init ──
 
-  // Get recent nodes up to maxNodes
+function initGraph() {
+  const container = document.getElementById('graph-container');
+
+  graph3d = ForceGraph3D()(document.getElementById('3d-graph'))
+    .width(container.clientWidth)
+    .height(container.clientHeight)
+    .backgroundColor('#0d1117')
+    .showNavInfo(false)
+    // Node appearance
+    .nodeVal(node => {
+      const g = id2glyph[node.id];
+      const r = glyphRadius(g);
+      return r * r; // nodeVal is volume-like, so square the radius
+    })
+    .nodeColor(node => glyphColor(id2glyph[node.id]))
+    .nodeOpacity(0.9)
+    .nodeResolution(8)
+    // Link appearance
+    .linkColor(link => {
+      const sId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tId = typeof link.target === 'object' ? link.target.id : link.target;
+      const classification = classifyEdge(id2glyph[sId], id2glyph[tId]);
+      return EDGE_COLORS[classification] || EDGE_COLORS.new;
+    })
+    .linkOpacity(0.6)
+    .linkWidth(link => {
+      const sId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tId = typeof link.target === 'object' ? link.target.id : link.target;
+      return edgeThickness(id2glyph[sId], id2glyph[tId]);
+    })
+    // Forces (matching D3 config)
+    .d3AlphaDecay(0.02)
+    .d3VelocityDecay(0.3)
+    .d3Force('charge', d3.forceManyBody().strength(-60).distanceMax(300))
+    .d3Force('link', d3.forceLink().id(d => d.id).distance(40).strength(0.3))
+    .d3Force('collision', d3.forceCollide().radius(8))
+    // Interactions
+    .onNodeHover(node => {
+      const el = document.getElementById('3d-graph');
+      el.style.cursor = node ? 'pointer' : 'default';
+      if (node) {
+        showTooltip3D(node);
+      } else {
+        hideTooltip();
+      }
+    })
+    .onNodeClick(node => {
+      if (node) inspectGlyph(node);
+    })
+    .graphData({ nodes: [], links: [] });
+
+  scheduleGraphUpdate();
+}
+
+function scheduleGraphUpdate() {
+  graphUpdateTimer = setInterval(updateGraphData, 1000);
+}
+
+// ── Data update ──
+
+function updateGraphData() {
+  if (!graph3d) return;
+  const maxNodes = parseInt(document.getElementById('max-nodes-slider').value);
+
   const recentGlyphs = glyphLog.slice(-maxNodes);
   const nodeIds = new Set(recentGlyphs.map(g => g.id));
 
-  // Build node array
-  const existingPositions = {};
-  for (const n of d3Nodes) existingPositions[n.id] = { x: n.x, y: n.y };
+  // Build nodes — preserve existing positions
+  const existingById = {};
+  for (const n of currentGraphData.nodes) {
+    existingById[n.id] = { x: n.x, y: n.y, z: n.z };
+  }
 
-  d3Nodes = recentGlyphs.map(g => {
-    const existing = existingPositions[g.id];
-    return {
-      id: g.id,
-      glyph: g,
-      ...(existing || {})
-    };
+  const nodes = recentGlyphs.map(g => {
+    const existing = existingById[g.id];
+    const node = { id: g.id };
+    if (existing) { node.x = existing.x; node.y = existing.y; node.z = existing.z; }
+    return node;
   });
 
-  // Build link array (only edges between visible nodes)
-  d3Links = [];
+  // Build links (dedup, only between visible nodes)
+  const links = [];
   const seen = new Set();
   for (const e of graphEdges) {
     const src = typeof e.source === 'object' ? e.source.id : e.source;
@@ -1526,101 +1549,22 @@ function updateGraphData() {
       const key = src + '-' + tgt;
       if (!seen.has(key)) {
         seen.add(key);
-        d3Links.push({ source: src, target: tgt, weight: e.weight || 1 });
+        links.push({ source: src, target: tgt });
       }
     }
   }
 
-  // Limit edges for performance
-  if (d3Links.length > 3000) {
-    d3Links = d3Links.slice(-3000);
-  }
+  // Performance cap
+  const cappedLinks = links.length > 3000 ? links.slice(-3000) : links;
 
-  // Update links
-  const link = svg.selectAll('line.link').data(d3Links, d => {
-    const s = typeof d.source === 'object' ? d.source.id : d.source;
-    const t = typeof d.target === 'object' ? d.target.id : d.target;
-    return s + '-' + t;
-  });
-  link.exit().remove();
-  const linkEnter = link.enter().append('line')
-    .attr('class', 'link');
-
-  // Color and size ALL edges by tag relationship and entropy delta
-  svg.selectAll('line.link').each(function(d) {
-    const sId = typeof d.source === 'object' ? d.source.id : d.source;
-    const tId = typeof d.target === 'object' ? d.target.id : d.target;
-    const sGlyph = id2glyph[sId];
-    const tGlyph = id2glyph[tId];
-    const classification = classifyEdge(sGlyph, tGlyph);
-    const color = EDGE_COLORS[classification] || EDGE_COLORS.new;
-    const thickness = edgeThickness(sGlyph, tGlyph);
-    const opacity = classification === 'origin' ? 0.2 : (classification === 'new' ? 0.4 : 0.65);
-    d3.select(this)
-      .attr('stroke', color)
-      .attr('stroke-width', thickness)
-      .attr('stroke-opacity', opacity);
-  });
-
-  // Update nodes
-  const node = svg.selectAll('circle.node').data(d3Nodes, d => d.id);
-  node.exit().remove();
-  const nodeEnter = node.enter().append('circle')
-    .attr('class', 'node')
-    .attr('stroke', '#222')
-    .attr('stroke-width', 0.5)
-    .attr('cursor', 'pointer')
-    .call(d3.drag()
-      .on('start', dragStarted)
-      .on('drag', dragged)
-      .on('end', dragEnded))
-    .on('mouseover', (event, d) => showTooltip(event, d))
-    .on('mouseout', hideTooltip)
-    .on('click', (event, d) => inspectGlyph(d));
-
-  // Update all nodes' visual properties
-  svg.selectAll('circle.node')
-    .attr('r', d => glyphRadius(d.glyph))
-    .attr('fill', d => glyphColor(d.glyph));
-
-  // Restart simulation
-  simulation.nodes(d3Nodes);
-  simulation.force('link').links(d3Links);
-  simulation.alpha(0.15).restart();
+  currentGraphData = { nodes, links: cappedLinks };
+  graph3d.graphData(currentGraphData);
 }
 
-function ticked() {
-  const svg = d3.select('#graph-svg g.graph-root');
+// ── Tooltip (adapted for 3D hover) ──
 
-  svg.selectAll('line.link')
-    .attr('x1', d => d.source.x)
-    .attr('y1', d => d.source.y)
-    .attr('x2', d => d.target.x)
-    .attr('y2', d => d.target.y);
-
-  svg.selectAll('circle.node')
-    .attr('cx', d => d.x)
-    .attr('cy', d => d.y);
-}
-
-function dragStarted(event, d) {
-  if (!event.active) simulation.alphaTarget(0.3).restart();
-  d.fx = d.x;
-  d.fy = d.y;
-}
-function dragged(event, d) {
-  d.fx = event.x;
-  d.fy = event.y;
-}
-function dragEnded(event, d) {
-  if (!event.active) simulation.alphaTarget(0);
-  d.fx = null;
-  d.fy = null;
-}
-
-// ===== TOOLTIP =====
-function showTooltip(event, d) {
-  const g = d.glyph;
+function showTooltip3D(node) {
+  const g = id2glyph[node.id];
   if (!g) return;
   const tt = document.getElementById('tooltip');
   tt.style.display = 'block';
@@ -1632,18 +1576,21 @@ function showTooltip(event, d) {
     ${g.reflexProfile ? `<div style="color:var(--purple)">Reflex: ${g.reflexProfile.type} (${g.reflexProfile.intensity.toFixed(2)})</div>` : ''}
     ${conceptualAttractors[g.id] ? '<div style="color:var(--red)">Conceptual Attractor</div>' : ''}
   `;
+  // Position tooltip near the mouse — 3d-force-graph tracks via pointer events
   const rect = document.getElementById('graph-container').getBoundingClientRect();
-  tt.style.left = (event.clientX - rect.left + 15) + 'px';
-  tt.style.top = (event.clientY - rect.top - 10) + 'px';
+  const evt = window.event || {};
+  tt.style.left = ((evt.clientX || 0) - rect.left + 15) + 'px';
+  tt.style.top = ((evt.clientY || 0) - rect.top - 10) + 'px';
 }
 
 function hideTooltip() {
   document.getElementById('tooltip').style.display = 'none';
 }
 
-// ===== INSPECTOR =====
-function inspectGlyph(d) {
-  const g = d.glyph;
+// ── Inspector (click on node) ──
+
+function inspectGlyph(node) {
+  const g = id2glyph[node.id];
   if (!g) return;
   switchTab('inspector');
 
@@ -1682,6 +1629,15 @@ function inspectGlyph(d) {
       <b>Neighbors:</b> ${(adjacency.get(g.id) || new Set()).size}
     </div>
   `;
+
+  // Focus camera on clicked node
+  const distance = 120;
+  const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
+  graph3d.cameraPosition(
+    { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
+    node,
+    1000
+  );
 }
 
 // ===== VIEW MODES =====
@@ -1690,58 +1646,77 @@ function setView(mode) {
   document.querySelectorAll('.view-modes button').forEach(b => b.classList.remove('active'));
   document.getElementById('view-' + mode).classList.add('active');
 
-  const container = document.getElementById('graph-container');
-  const W = container.clientWidth;
-  const H = container.clientHeight;
+  if (!graph3d) return;
 
   if (mode === 'force') {
-    simulation
-      .force('center', d3.forceCenter(W / 2, H / 2))
-      .force('charge', d3.forceManyBody().strength(-60).distanceMax(300))
-      .force('link', d3.forceLink().id(d => d.id).distance(40).strength(0.3))
-      .force('x', null)
-      .force('y', null);
-  } else if (mode === 'radial') {
-    simulation
-      .force('center', null)
-      .force('charge', d3.forceManyBody().strength(-30).distanceMax(200))
-      .force('link', d3.forceLink().id(d => d.id).distance(30).strength(0.2))
-      .force('x', d3.forceX(W / 2).strength(0.05))
-      .force('y', d3.forceY(H / 2).strength(0.05));
+    // Standard 3D force layout — reset all custom forces
+    graph3d
+      .d3Force('charge', d3.forceManyBody().strength(-60).distanceMax(300))
+      .d3Force('link', d3.forceLink().id(d => d.id).distance(40).strength(0.3))
+      .d3Force('radialX', null)
+      .d3Force('radialY', null)
+      .d3Force('radialZ', null)
+      .d3Force('hierarchyY', null)
+      .d3Force('centerX', null);
 
-    // Position by generation
-    for (const n of d3Nodes) {
-      const g = n.glyph;
+    // Reheat
+    graph3d.d3ReheatSimulation();
+
+  } else if (mode === 'radial') {
+    // Radial: position by generation angle + entropy radius, spread across z
+    graph3d
+      .d3Force('charge', d3.forceManyBody().strength(-30).distanceMax(200))
+      .d3Force('link', d3.forceLink().id(d => d.id).distance(30).strength(0.2))
+      .d3Force('hierarchyY', null)
+      .d3Force('centerX', null);
+
+    // Position nodes in a spiral by generation
+    for (const n of currentGraphData.nodes) {
+      const g = id2glyph[n.id];
       if (g) {
         const angle = ((g.generationBorn || 0) / 100) * Math.PI * 2;
         const r = 100 + (g.entropy || 0) * 0.5;
-        n.x = W / 2 + Math.cos(angle) * r;
-        n.y = H / 2 + Math.sin(angle) * r;
+        n.x = Math.cos(angle) * r;
+        n.y = Math.sin(angle) * r;
+        n.z = ((g.generationBorn || 0) % 50) * 3 - 75; // spread z by generation
       }
     }
-  } else if (mode === 'hierarchy') {
-    simulation
-      .force('center', null)
-      .force('charge', d3.forceManyBody().strength(-40).distanceMax(200))
-      .force('link', d3.forceLink().id(d => d.id).distance(50).strength(0.5))
-      .force('x', d3.forceX(W / 2).strength(0.1))
-      .force('y', null);
 
-    // Position by ancestry depth
-    for (const n of d3Nodes) {
-      const g = n.glyph;
+    // Gentle pull toward center
+    graph3d
+      .d3Force('radialX', d3.forceX(0).strength(0.03))
+      .d3Force('radialY', d3.forceY(0).strength(0.03))
+      .d3Force('radialZ', d3.forceZ(0).strength(0.03));
+
+    graph3d.d3ReheatSimulation();
+
+  } else if (mode === 'hierarchy') {
+    // Hierarchy: y-axis = ancestry depth, x/z = force-spread
+    graph3d
+      .d3Force('charge', d3.forceManyBody().strength(-40).distanceMax(200))
+      .d3Force('link', d3.forceLink().id(d => d.id).distance(50).strength(0.5))
+      .d3Force('radialX', null)
+      .d3Force('radialY', null)
+      .d3Force('radialZ', null);
+
+    // Position by ancestry depth on y-axis
+    for (const n of currentGraphData.nodes) {
+      const g = id2glyph[n.id];
       if (g) {
         const depth = (g.ancestry || []).length;
-        n.y = 50 + depth * 80;
+        n.y = -depth * 40; // negative so deeper = lower
       }
     }
-    simulation.force('y', d3.forceY(d => {
-      const g = d.glyph;
-      return g ? 50 + (g.ancestry || []).length * 80 : H / 2;
-    }).strength(0.3));
-  }
 
-  simulation.alpha(0.8).restart();
+    graph3d
+      .d3Force('hierarchyY', d3.forceY(d => {
+        const g = id2glyph[d.id];
+        return g ? -(g.ancestry || []).length * 40 : 0;
+      }).strength(0.3))
+      .d3Force('centerX', d3.forceX(0).strength(0.05));
+
+    graph3d.d3ReheatSimulation();
+  }
 }
 
 // ===== TAB SWITCHING =====
@@ -1783,13 +1758,9 @@ document.getElementById('max-nodes-slider').addEventListener('input', function()
 
 // ===== WINDOW RESIZE =====
 window.addEventListener('resize', () => {
-  const container = document.getElementById('graph-container');
-  const W = container.clientWidth;
-  const H = container.clientHeight;
-  d3.select('#graph-svg').attr('width', W).attr('height', H);
-  if (simulation) {
-    simulation.force('center', d3.forceCenter(W / 2, H / 2));
-    simulation.alpha(0.3).restart();
+  if (graph3d) {
+    const container = document.getElementById('graph-container');
+    graph3d.width(container.clientWidth).height(container.clientHeight);
   }
 });
 
