@@ -455,22 +455,63 @@ let lastStepTime     = 0;
 let originChildCount = {};   // id -> number of direct children spawned
 let originSpawnProb  = {};   // id -> current spawn probability (decays each gen)
 
-// Tag vocabulary: the English alphabet
-// Semantic roles mapped to specific letters:
-//   a=origin, b=flex, c=ghost, d=fractal, e=wild, f=mirror, g=unknown, h=stable
-//   i=reflex, j=preserve, k=seek, l=novel, m=bridge, n=transform, o=evolve
-//   p-s=seasonal, t=renaissance, u=mutation, v-z=free pool
-const ALPHABET = 'abcdefghijklmnopqrstuvwxyz'.split('');
-const BASE_TAGS = ALPHABET.slice(0, 8);  // a through h
-const SEASONAL_TAGS = {
-  [SeasonalPhase.EXPLORATION]:   ['p','q','r'],
-  [SeasonalPhase.CONSOLIDATION]: ['q','r','s'],
-  [SeasonalPhase.DORMANCY]:      ['r','s','p'],
-  [SeasonalPhase.RENAISSANCE]:   ['s','p','q']
+// ===== PHYSICS TAXONOMY =====
+// Six physics domains as color-coded clusters + cross-domain structural roles
+const PHYSICS_DOMAINS = {
+  mechanics:   { tags: ['mass','force','momentum','inertia','torque'],                color: '#ff4d4d' },  // red
+  thermo:      { tags: ['heat','entropy','pressure','temperature','boltzmann'],       color: '#ff9933' },  // orange
+  em:          { tags: ['charge','field','photon','wave','flux'],                     color: '#00e5ff' },  // cyan
+  quantum:     { tags: ['spin','quark','lepton','boson','superposition'],             color: '#bc8cff' },  // purple
+  relativity:  { tags: ['gravity','spacetime','curvature','geodesic','horizon'],      color: '#ffd700' },  // gold
+  nuclear:     { tags: ['fission','fusion','decay','isotope','binding'],              color: '#3fb950' },  // green
+  crossdomain: { tags: ['origin','observer','symmetry','conservation','vacuum','singularity'], color: '#c9d1d9' }  // white/gray
 };
-const REFLEX_TAGS = ['i','j','h','k','l','m','n','o'];
-const MUTATION_TAGS = ['u'];
-const ALL_KNOWN_TAGS = [...new Set([...ALPHABET])];
+
+// Build flat tag arrays and lookup maps
+const TAG_TO_DOMAIN = {};
+const DOMAIN_COLORS = {};
+const ALL_PHYSICS_TAGS = [];
+for (const [domain, info] of Object.entries(PHYSICS_DOMAINS)) {
+  DOMAIN_COLORS[domain] = info.color;
+  for (const tag of info.tags) {
+    TAG_TO_DOMAIN[tag] = domain;
+    ALL_PHYSICS_TAGS.push(tag);
+  }
+}
+
+function getNodeDomain(g) {
+  if (!g) return 'crossdomain';
+  // Determine dominant domain by tag majority
+  const domainCounts = {};
+  for (const t of g.tags) {
+    const d = TAG_TO_DOMAIN[t];
+    if (d) domainCounts[d] = (domainCounts[d] || 0) + 1;
+  }
+  let best = 'crossdomain', bestCount = 0;
+  for (const [d, c] of Object.entries(domainCounts)) {
+    if (c > bestCount) { bestCount = c; best = d; }
+  }
+  return best;
+}
+
+const BASE_TAGS = [
+  'mass','force','momentum',       // mechanics
+  'charge','field','photon',       // em
+  'spin','quark',                  // quantum
+  'heat','entropy',                // thermo
+  'gravity','spacetime',           // relativity
+  'fission','fusion',              // nuclear
+  'origin','observer','symmetry'   // cross-domain
+];
+const SEASONAL_TAGS = {
+  [SeasonalPhase.EXPLORATION]:   ['superposition','geodesic','flux'],
+  [SeasonalPhase.CONSOLIDATION]: ['binding','conservation','inertia'],
+  [SeasonalPhase.DORMANCY]:      ['vacuum','boltzmann','horizon'],
+  [SeasonalPhase.RENAISSANCE]:   ['singularity','curvature','wave']
+};
+const REFLEX_TAGS = ['observer','conservation','symmetry','field','wave','flux','binding','decay'];
+const MUTATION_TAGS = ['isotope'];
+const ALL_KNOWN_TAGS = [...new Set(ALL_PHYSICS_TAGS)];
 
 // Pre-computed random vectors for tag embedding (deterministic seed per tag)
 const tagVectors = {};
@@ -681,7 +722,7 @@ function fitness(g) {
   let seasonalBonus = 0;
   if (currentSeason === SeasonalPhase.EXPLORATION && sem > 0.7) seasonalBonus = 50;
   else if (currentSeason === SeasonalPhase.CONSOLIDATION && conceptualAttractors[g.id]) seasonalBonus = 75;
-  else if (currentSeason === SeasonalPhase.RENAISSANCE && g.tags.includes('t')) seasonalBonus = 100;
+  else if (currentSeason === SeasonalPhase.RENAISSANCE && g.tags.includes('singularity')) seasonalBonus = 100;
   return 200 * sem - g.entropy + 50 * influence + seasonalBonus;
 }
 
@@ -733,7 +774,7 @@ function maybeStore(g) {
     id2glyph[g.id] = g;
     addNode(g.id, { entropy: g.entropy, tags: g.tags, fit: fitness(g) });
     stagnantCounter[g.id] = 0;
-    if (!g.tags.includes('i')) reflexFree.push(g);
+    if (!g.tags.includes('observer')) reflexFree.push(g);
     return true;
   }
   return false;
@@ -758,7 +799,7 @@ function createGlyph() {
 
 // ===== MUTATION =====
 function mutateTag(tags) {
-  if (tags.length < 2) return 'u';
+  if (tags.length < 2) return 'isotope';
   const [a, b] = sample(tags, 2);
   if (currentSeason === SeasonalPhase.EXPLORATION) return a + '\u2192' + b;
   if (currentSeason === SeasonalPhase.CONSOLIDATION) return a + '\u2227' + b;
@@ -814,7 +855,7 @@ function smartEdgeExplosion(child, parents) {
 
 // ===== ORIGIN CLAMPING HELPERS =====
 function isOriginClamped(g) {
-  if (!g.tags.includes('a')) return false;
+  if (!g.tags.includes('origin')) return false;
 
   // 1. Child cap: too many children already
   if ((originChildCount[g.id] || 0) >= ORIGIN_CHILD_CAP) return true;
@@ -832,7 +873,7 @@ function isOriginClamped(g) {
 }
 
 function trackOriginSpawn(parent, childId) {
-  if (parent.tags.includes('a')) {
+  if (parent.tags.includes('origin')) {
     originChildCount[parent.id] = (originChildCount[parent.id] || 0) + 1;
   }
 }
@@ -933,17 +974,17 @@ function determineReflexType(g, contextGlyphs) {
 function createReflexGlyph(parent, reflexType) {
   let newTags = [...parent.tags];
   if (reflexType === ReflexType.DEFENSIVE) {
-    newTags.push('i', 'j', 'h');
+    newTags.push('observer', 'conservation', 'symmetry');
   } else if (reflexType === ReflexType.EXPLORATORY) {
-    newTags.push('i', 'k', 'l', randomTag());
+    newTags.push('observer', 'field', 'wave', randomTag());
   } else if (reflexType === ReflexType.COLLABORATIVE) {
     const distant = findSemanticallyDistantGlyph(parent);
-    if (distant) newTags.push(...distant.tags.slice(0, 2), 'i', 'm');
-    else newTags.push('i', 'm');
+    if (distant) newTags.push(...distant.tags.slice(0, 2), 'observer', 'flux');
+    else newTags.push('observer', 'flux');
   } else if (reflexType === ReflexType.CONSOLIDATIVE) {
-    newTags.push('i', 'r', 'q');
+    newTags.push('observer', 'binding', 'conservation');
   } else {
-    newTags = [mutateTag(parent.tags), 'i', 'n', 'o'];
+    newTags = [mutateTag(parent.tags), 'observer', 'decay', 'fusion'];
   }
 
   const g = {
@@ -965,7 +1006,7 @@ function createReflexGlyph(parent, reflexType) {
 
 function reflexTest() {
   const context = glyphLog.slice(-100);
-  const targets = glyphLog.filter(g => g.tags.includes('g') && g.entropy < 150);
+  const targets = glyphLog.filter(g => g.tags.includes('vacuum') && g.entropy < 150);
   // Limit to avoid performance issues
   const limited = targets.slice(-5);
 
@@ -1087,7 +1128,7 @@ function activateRenaissancePhase() {
     const info = dormantGlyphs[gid];
     delete dormantGlyphs[gid];
     const g = info.glyph;
-    g.tags.push('t');
+    g.tags.push('singularity');
     g.entropy = calcEntropy(g);
     g.vec = embed(g.tags);
     id2glyph[gid] = g;
@@ -1412,42 +1453,44 @@ let currentGraphData = { nodes: [], links: [] };
 
 function glyphColor(g) {
   if (!g) return '#333333';
-  const brightness = Math.min(80, 40 + Math.floor(g.entropy / 20));
-  // Convert HSL grayscale to hex for Three.js
-  const v = Math.round(brightness * 2.55);
-  return '#' + v.toString(16).padStart(2, '0').repeat(3);
+  const domain = getNodeDomain(g);
+  return DOMAIN_COLORS[domain] || '#c9d1d9';
 }
 
 function classifyEdge(sourceGlyph, targetGlyph) {
   if (!sourceGlyph || !targetGlyph) return 'unknown';
-  const sTags = new Set(sourceGlyph.tags);
-  const tTags = new Set(targetGlyph.tags);
-  // f=mirror
-  if (sTags.has('f') || tTags.has('f')) return 'mirror';
+  const sDomain = getNodeDomain(sourceGlyph);
+  const tDomain = getNodeDomain(targetGlyph);
+
+  // Same domain = intra-cluster bond
+  if (sDomain === tDomain && sDomain !== 'crossdomain') return 'intra';
+
+  // Cross-domain node involved = bridging/unifying edge
+  if (sDomain === 'crossdomain' || tDomain === 'crossdomain') return 'bridge';
+
+  // High tag overlap across domains = resonance (mirror-like)
   if (sourceGlyph.tags.length > 0) {
-    const overlap = sourceGlyph.tags.filter(t => tTags.has(t)).length;
-    if (overlap / sourceGlyph.tags.length >= 0.8 && targetGlyph.tags.length >= sourceGlyph.tags.length) return 'mirror';
+    const tSet = new Set(targetGlyph.tags);
+    const overlap = sourceGlyph.tags.filter(t => tSet.has(t)).length;
+    if (overlap / sourceGlyph.tags.length >= 0.6) return 'resonance';
   }
-  // c=ghost, d=fractal, a=origin, g=unknown, e=wild
-  if (sTags.has('c') || tTags.has('c')) return 'ghost';
-  if (sTags.has('d') || tTags.has('d')) return 'fractal';
-  if (sTags.has('a') || tTags.has('a')) return 'origin';
-  if (sTags.has('g') || tTags.has('g') || sTags.has('e') || tTags.has('e')) return 'new';
-  return 'new';
+
+  // Different domains, low overlap = inter-cluster
+  return 'inter';
 }
 
+// Edge colors by relationship type
 const EDGE_COLORS = {
-  mirror:  '#bc8cff',
-  ghost:   '#00e5ff',
-  fractal: '#ffe066',
-  origin:  '#ff5050',
-  new:     '#737373',
-  unknown: '#737373'
+  intra:     '#ffffff',  // white — same-domain bonds
+  inter:     '#ff9933',  // orange — cross-domain links
+  bridge:    '#ffd700',  // gold — structural/cross-domain bridges
+  resonance: '#bc8cff',  // purple — high-overlap across domains
+  unknown:   '#555555'
 };
 
 const EDGE_OPACITY = {
-  mirror: 0.65, ghost: 0.65, fractal: 0.65,
-  origin: 0.2, new: 0.4, unknown: 0.4
+  intra: 0.7, inter: 0.45, bridge: 0.55,
+  resonance: 0.65, unknown: 0.3
 };
 
 function edgeThickness(sourceGlyph, targetGlyph) {
@@ -1487,7 +1530,7 @@ function initGraph() {
       const sId = typeof link.source === 'object' ? link.source.id : link.source;
       const tId = typeof link.target === 'object' ? link.target.id : link.target;
       const classification = classifyEdge(id2glyph[sId], id2glyph[tId]);
-      return EDGE_COLORS[classification] || EDGE_COLORS.new;
+      return EDGE_COLORS[classification] || EDGE_COLORS.unknown;
     })
     .linkOpacity(0.6)
     .linkWidth(link => {
