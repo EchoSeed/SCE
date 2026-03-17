@@ -628,7 +628,9 @@ def select_parents(k=10):
 
     weights = []
     for node_id, node_data in nodes:
-        base_weight = max(1, node_data.get('fit', 1))
+        NEGATIVE_SLOPE = 0.01
+        raw_fit = node_data.get('fit', 0)
+        base_weight = raw_fit if raw_fit > 0 else max(0.01, 1 + NEGATIVE_SLOPE * raw_fit)
 
         # Attractor bonus
         if node_id in conceptual_attractors:

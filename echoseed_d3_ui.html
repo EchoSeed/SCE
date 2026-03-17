@@ -861,7 +861,9 @@ function selectParents(k) {
   const items = [];
   const weights = [];
   for (const [nid, ndata] of nodes) {
-    let w = Math.max(1, ndata.fit || 1);
+    const NEGATIVE_SLOPE = 0.01;
+    const rawFit = ndata.fit || 0;
+    let w = rawFit > 0 ? rawFit : Math.max(0.01, 1 + NEGATIVE_SLOPE * rawFit);
     if (conceptualAttractors[nid]) w *= 2;
     const g = id2glyph[nid];
     if (g) {
