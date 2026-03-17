@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EchoSeed v4.3 — Interactive 3D UI</title>
+<title>EchoSeed - Cognitive Architecture</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
@@ -386,7 +386,6 @@
       <div class="stats-grid">
         <div class="stat-item"><span class="label">Generation</span><span class="value green" id="stat-gen">0</span></div>
         <div class="stat-item"><span class="label">Season</span><span class="value purple" id="stat-season">exploration</span></div>
-        <div class="stat-item"><span class="label">Glyphs</span><span class="value" id="stat-glyphs">0</span></div>
         <div class="stat-item"><span class="label">Nodes</span><span class="value" id="stat-nodes">0</span></div>
         <div class="stat-item"><span class="label">Edges</span><span class="value" id="stat-edges">0</span></div>
         <div class="stat-item"><span class="label">Attractors</span><span class="value yellow" id="stat-attractors">0</span></div>
@@ -1634,7 +1633,7 @@ function engineLoop(timestamp) {
 function updateStats() {
   document.getElementById('stat-gen').textContent = generationCount;
   document.getElementById('stat-season').textContent = currentSeason;
-  document.getElementById('stat-glyphs').textContent = glyphLog.length;
+  // glyphLog count tracked via Nodes stat
   document.getElementById('stat-nodes').textContent = graphNodes.size;
   document.getElementById('stat-edges').textContent = graphEdges.length;
   document.getElementById('stat-attractors').textContent = Object.keys(conceptualAttractors).length;
