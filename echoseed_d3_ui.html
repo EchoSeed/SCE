@@ -191,10 +191,14 @@
   .log-entry .reflex-log { color: var(--cyan); }
   .log-entry .attractor-log { color: var(--red); }
 
-  /* ── Tooltip ── */
+  /* ── Node Quick Display (bottom-right) ── */
   .tooltip {
     position: absolute;
-    background: #1c2128;
+    right: 12px;
+    bottom: 12px;
+    left: auto;
+    top: auto;
+    background: rgba(28, 33, 40, 0.92);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 14px;
@@ -203,6 +207,7 @@
     z-index: 100;
     max-width: 280px;
     box-shadow: 0 4px 12px rgba(0,0,0,.4);
+    backdrop-filter: blur(6px);
   }
   .tooltip .tt-id { font-weight: bold; color: var(--accent); }
   .tooltip .tt-tags { color: var(--green); margin: 4px 0; }
@@ -1633,21 +1638,19 @@ function updateGraphData() {
 function showTooltip3D(node) {
   const g = id2glyph[node.id];
   if (!g) return;
+  const domain = getNodeDomain(g);
+  const domainColor = DOMAIN_COLORS[domain] || '#c9d1d9';
   const tt = document.getElementById('tooltip');
   tt.style.display = 'block';
   tt.innerHTML = `
     <div class="tt-id">${g.id}</div>
+    <div style="color:${domainColor};font-size:10px;margin-bottom:3px;">${domain.toUpperCase()}</div>
     <div class="tt-tags">Tags: ${g.tags.join(', ')}</div>
     <div class="tt-entropy">Entropy: ${g.entropy}</div>
     <div class="tt-ancestry">Ancestry: ${(g.ancestry||[]).join(', ') || 'none'}</div>
     ${g.reflexProfile ? `<div style="color:var(--purple)">Reflex: ${g.reflexProfile.type} (${g.reflexProfile.intensity.toFixed(2)})</div>` : ''}
     ${conceptualAttractors[g.id] ? '<div style="color:var(--red)">Conceptual Attractor</div>' : ''}
   `;
-  // Position tooltip near the mouse — 3d-force-graph tracks via pointer events
-  const rect = document.getElementById('graph-container').getBoundingClientRect();
-  const evt = window.event || {};
-  tt.style.left = ((evt.clientX || 0) - rect.left + 15) + 'px';
-  tt.style.top = ((evt.clientY || 0) - rect.top - 10) + 'px';
 }
 
 function hideTooltip() {
