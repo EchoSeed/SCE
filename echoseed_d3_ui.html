@@ -1489,12 +1489,9 @@ function initGraph() {
       const tId = typeof link.target === 'object' ? link.target.id : link.target;
       return edgeThickness(id2glyph[sId], id2glyph[tId]);
     })
-    // Forces (matching D3 config)
+    // Alpha config
     .d3AlphaDecay(0.02)
     .d3VelocityDecay(0.3)
-    .d3Force('charge', d3.forceManyBody().strength(-60).distanceMax(300))
-    .d3Force('link', d3.forceLink().id(d => d.id).distance(40).strength(0.3))
-    .d3Force('collision', d3.forceCollide().radius(8))
     // Interactions
     .onNodeHover(node => {
       const el = document.getElementById('3d-graph');
@@ -1509,6 +1506,18 @@ function initGraph() {
       if (node) inspectGlyph(node);
     })
     .graphData({ nodes: [], links: [] });
+
+  // Configure the INTERNAL 3D forces (don't replace with 2D d3.v7 forces)
+  graph3d.d3Force('charge').strength(-60).distanceMax(300);
+  graph3d.d3Force('link').id(d => d.id).distance(40).strength(0.3);
+
+  // Add collision — need to get the force constructor from the internal engine
+  // The internal sim uses d3-force-3d, so we grab a force from it
+  const internalSim = graph3d.d3Force('charge');
+  // For collision, we can add it via the simulation directly
+  // Access the internal d3 simulation to add a 3D-aware collision force
+  // 3d-force-graph doesn't ship forceCollide by default, so we skip it
+  // (nodes are rendered as spheres that don't need SVG collision detection)
 
   scheduleGraphUpdate();
 }
@@ -1649,26 +1658,20 @@ function setView(mode) {
   if (!graph3d) return;
 
   if (mode === 'force') {
-    // Standard 3D force layout — reset all custom forces
+    // Standard 3D force layout — configure internal 3D forces, clear custom ones
+    graph3d.d3Force('charge').strength(-60).distanceMax(300);
+    graph3d.d3Force('link').distance(40).strength(0.3);
     graph3d
-      .d3Force('charge', d3.forceManyBody().strength(-60).distanceMax(300))
-      .d3Force('link', d3.forceLink().id(d => d.id).distance(40).strength(0.3))
-      .d3Force('radialX', null)
-      .d3Force('radialY', null)
-      .d3Force('radialZ', null)
-      .d3Force('hierarchyY', null)
-      .d3Force('centerX', null);
+      .d3Force('posX', null)
+      .d3Force('posY', null)
+      .d3Force('posZ', null);
 
-    // Reheat
     graph3d.d3ReheatSimulation();
 
   } else if (mode === 'radial') {
-    // Radial: position by generation angle + entropy radius, spread across z
-    graph3d
-      .d3Force('charge', d3.forceManyBody().strength(-30).distanceMax(200))
-      .d3Force('link', d3.forceLink().id(d => d.id).distance(30).strength(0.2))
-      .d3Force('hierarchyY', null)
-      .d3Force('centerX', null);
+    // Radial: spiral by generation + entropy radius, spread on z
+    graph3d.d3Force('charge').strength(-30).distanceMax(200);
+    graph3d.d3Force('link').distance(30).strength(0.2);
 
     // Position nodes in a spiral by generation
     for (const n of currentGraphData.nodes) {
@@ -1678,42 +1681,41 @@ function setView(mode) {
         const r = 100 + (g.entropy || 0) * 0.5;
         n.x = Math.cos(angle) * r;
         n.y = Math.sin(angle) * r;
-        n.z = ((g.generationBorn || 0) % 50) * 3 - 75; // spread z by generation
+        n.z = ((g.generationBorn || 0) % 50) * 3 - 75;
       }
     }
 
-    // Gentle pull toward center
+    // Gentle pull toward center on all 3 axes using forceZ polyfill for z
     graph3d
-      .d3Force('radialX', d3.forceX(0).strength(0.03))
-      .d3Force('radialY', d3.forceY(0).strength(0.03))
-      .d3Force('radialZ', d3.forceZ(0).strength(0.03));
+      .d3Force('posX', d3.forceX(0).strength(0.03))
+      .d3Force('posY', d3.forceY(0).strength(0.03))
+      .d3Force('posZ', d3.forceZ(0).strength(0.03));
 
     graph3d.d3ReheatSimulation();
 
   } else if (mode === 'hierarchy') {
-    // Hierarchy: y-axis = ancestry depth, x/z = force-spread
-    graph3d
-      .d3Force('charge', d3.forceManyBody().strength(-40).distanceMax(200))
-      .d3Force('link', d3.forceLink().id(d => d.id).distance(50).strength(0.5))
-      .d3Force('radialX', null)
-      .d3Force('radialY', null)
-      .d3Force('radialZ', null);
+    // Hierarchy: y = ancestry depth, x/z = force-spread
+    graph3d.d3Force('charge').strength(-40).distanceMax(200);
+    graph3d.d3Force('link').distance(50).strength(0.5);
+
+    // Clear radial forces
+    graph3d.d3Force('posZ', null);
 
     // Position by ancestry depth on y-axis
     for (const n of currentGraphData.nodes) {
       const g = id2glyph[n.id];
       if (g) {
         const depth = (g.ancestry || []).length;
-        n.y = -depth * 40; // negative so deeper = lower
+        n.y = -depth * 40;
       }
     }
 
     graph3d
-      .d3Force('hierarchyY', d3.forceY(d => {
+      .d3Force('posY', d3.forceY(d => {
         const g = id2glyph[d.id];
         return g ? -(g.ancestry || []).length * 40 : 0;
       }).strength(0.3))
-      .d3Force('centerX', d3.forceX(0).strength(0.05));
+      .d3Force('posX', d3.forceX(0).strength(0.05));
 
     graph3d.d3ReheatSimulation();
   }
