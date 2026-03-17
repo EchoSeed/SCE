@@ -868,6 +868,9 @@ function removeNode(id) {
 // ===== STORE =====
 function maybeStore(g) {
   g.vec = embed(g.tags);
+  // Ensure higgs is always set
+  if (g.higgs == null) g.higgs = HIGGS(g.id);
+  if (g.resonance_src === undefined) g.resonance_src = null;
   if (isNovel(g)) {
     glyphLog.push(g);
     id2glyph[g.id] = g;
@@ -1125,12 +1128,15 @@ function createReflexGlyph(parent, reflexType) {
     newTags = [mutateTag(parent.tags), 'observer', 'decay', 'fusion'];
   }
 
+  const id = genId();
   const g = {
-    id: genId(),
+    id: id,
     tags: [...new Set(newTags)],
     entropy: 0,
+    higgs: HIGGS(id),
     ancestry: [parent.id],
     generationBorn: generationCount,
+    resonance_src: null,
     reflexProfile: {
       type: reflexType,
       intensity: Math.random() * 0.5 + 0.5,
@@ -1197,8 +1203,32 @@ function pruneStagnant() {
     }
   }
 
-  const removeSet = new Set(toRemove);
-  for (const nid of toRemove) delete id2glyph[nid];
+  // Prune connectionless nodes older than 100 generations
+  const isolatedRemove = [];
+  for (const [nid] of graphNodes) {
+    const g = id2glyph[nid];
+    if (!g) continue;
+    const age = generationCount - (g.generationBorn || 0);
+    if (age < 100) continue;
+    const neighbors = adjacency.get(nid);
+    if (!neighbors || neighbors.size === 0) {
+      // No connections after 100 gens — prune
+      if (!conceptualAttractors[nid]) {
+        isolatedRemove.push(nid);
+      }
+    }
+  }
+
+  if (isolatedRemove.length > 0) {
+    for (const nid of isolatedRemove) {
+      removeNode(nid);
+      delete stagnantCounter[nid];
+    }
+    addLog(`Pruned ${isolatedRemove.length} isolated node${isolatedRemove.length > 1 ? 's' : ''} (no connections after 100 gen)`);
+  }
+
+  const removeSet = new Set([...toRemove, ...isolatedRemove]);
+  for (const nid of removeSet) delete id2glyph[nid];
   glyphLog = glyphLog.filter(g => !removeSet.has(g.id));
 }
 
@@ -1269,6 +1299,7 @@ function activateRenaissancePhase() {
     g.tags.push('singularity');
     g.entropy = calcEntropy(g);
     g.vec = embed(g.tags);
+    if (g.higgs == null) g.higgs = HIGGS(g.id);
     id2glyph[gid] = g;
     glyphLog.push(g);
     addLog(`<span class="tag">Reactivated</span> ${gid} [${g.tags.join(', ')}]`, 'renaissance');
