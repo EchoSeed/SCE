@@ -485,7 +485,7 @@
 const MAX_RAM_GLYPHS   = 20000;
 const LOW_ENTROPY      = 100;
 const LOW_KEEP_PROB    = 0.025;
-const PRUNE_AFTER      = 75;     // was 250 — much faster stagnant pruning
+const PRUNE_AFTER      = 10;     // prune stagnant nodes after 10 gens
 const ATTRACTOR_THRESHOLD = 5;
 const DORMANCY_THRESHOLD  = 200;  // was 500 — faster dormancy transition
 const ISOLATE_PRUNE_AGE  = 50;   // prune connectionless nodes after 50 gens
