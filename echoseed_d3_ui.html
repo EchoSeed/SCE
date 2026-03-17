@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EchoSeed v4.2 — Interactive 3D UI</title>
+<title>EchoSeed v4.3 — Interactive 3D UI</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
@@ -213,6 +213,42 @@
   .tooltip .tt-tags { color: var(--green); margin: 4px 0; }
   .tooltip .tt-entropy { color: var(--yellow); }
   .tooltip .tt-ancestry { color: #8b949e; font-size: 11px; }
+  .tooltip .tt-higgs { font-weight: bold; margin-top: 2px; }
+  .tooltip .tt-resonance { color: var(--purple); font-size: 11px; }
+
+  /* ── Seed Modal ── */
+  .seed-modal {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(13,17,23,0.96);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .seed-modal-inner {
+    width: 460px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 28px;
+  }
+  .seed-modal h2 { font-size: 14px; color: var(--accent); margin-bottom: 6px; letter-spacing: .1em; }
+  .seed-modal p { font-size: 11px; color: #8b949e; line-height: 1.8; margin-bottom: 16px; }
+  .seed-modal input {
+    width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-size: 13px; border-radius: 6px; outline: none;
+    caret-color: var(--green);
+  }
+  .seed-modal input:focus { border-color: var(--accent); }
+  .seed-modal .seed-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+  /* ── Snapshot Banner ── */
+  .snapshot-banner {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    background: rgba(56,139,253,0.12); border: 1px solid rgba(56,139,253,0.3);
+    padding: 6px 18px; border-radius: 6px; z-index: 50; font-size: 11px;
+    color: #58a6ff; letter-spacing: .08em; pointer-events: none;
+  }
+
+  /* ── Higgs Bar ── */
+  .higgs-bar {
+    height: 3px; border-radius: 2px; margin: 6px 0;
+    background: linear-gradient(to right, #388bfd 0%, #3fb950 50%, #e3b341 100%);
+  }
 
   /* ── Legend ── */
   .legend {
@@ -320,6 +356,16 @@
       <button id="view-radial" onclick="setView('radial')">Radial</button>
       <button id="view-hierarchy" onclick="setView('hierarchy')">Tree</button>
     </div>
+    <div class="view-modes">
+      <button class="active" id="color-domain" onclick="setColorMode('domain')">Domain</button>
+      <button id="color-higgs" onclick="setColorMode('higgs')">Higgs</button>
+    </div>
+    <div class="slider-group">
+      <label>Snapshot</label>
+      <input type="range" id="snapshot-slider" min="0" max="0" value="0" step="1" style="width:100px;">
+      <span id="snapshot-label" style="font-size:10px;color:#8b949e;">LIVE</span>
+      <button id="btn-snapshot-exit" onclick="exitSnapshot()" style="display:none;font-size:10px;padding:3px 8px;color:var(--accent);">&#x25C0; Live</button>
+    </div>
   </div>
 </div>
 
@@ -327,8 +373,9 @@
 <div id="main">
   <div id="graph-container">
     <div id="3d-graph"></div>
-    <div class="watermark">EchoSeed v4.2 · @Duhmeee</div>
+    <div class="watermark">EchoSeed v4.3 · @Duhmeee</div>
     <div class="tooltip" id="tooltip" style="display:none;"></div>
+    <div class="snapshot-banner" id="snapshot-banner" style="display:none;"></div>
   </div>
 
   <div id="sidebar">
@@ -345,7 +392,10 @@
         <div class="stat-item"><span class="label">Dormant</span><span class="value cyan" id="stat-dormant">0</span></div>
         <div class="stat-item"><span class="label">Reflex-Free</span><span class="value" id="stat-reflex-free">0</span></div>
         <div class="stat-item"><span class="label">Avg Entropy</span><span class="value yellow" id="stat-avg-entropy">0</span></div>
-        <div class="stat-item"><span class="label">Season Progress</span><span class="value" id="stat-season-prog">0/1000</span></div>
+        <div class="stat-item"><span class="label">Season Progress</span><span class="value" id="stat-season-prog">0/100</span></div>
+        <div class="stat-item"><span class="label">Higgs Field</span><span class="value" id="stat-higgs" style="font-weight:bold;">0.0000</span></div>
+        <div class="stat-item"><span class="label">Higgs State</span><span class="value" id="stat-higgs-state">CRITICAL</span></div>
+        <div class="stat-item"><span class="label">Seed</span><span class="value" id="stat-seed" style="color:#8b949e;font-size:10px;">none</span></div>
       </div>
       <div class="season-bar">
         <div class="season-seg" id="season-exploration" title="Exploration"></div>
@@ -406,9 +456,28 @@
   </div>
 </div>
 
+<!-- Seed Modal -->
+<div class="seed-modal" id="seed-modal" style="display:none;">
+  <div class="seed-modal-inner">
+    <h2>&#x2B21; INITIAL SEED</h2>
+    <p>
+      Provide a conceptual context to orient the root nodes.<br>
+      The entire lattice will crystallize from this seed.<br>
+      Leave blank for unconstrained emergence.
+    </p>
+    <input id="seed-input" type="text" maxlength="100"
+      placeholder="e.g. thermodynamic cognition, entropy as meaning...">
+    <div class="seed-actions">
+      <button onclick="dismissSeedModal()">Cancel</button>
+      <button onclick="launchWithSeed('')" style="color:var(--yellow)">Skip Seed</button>
+      <button onclick="launchWithSeed(document.getElementById('seed-input').value.trim())" style="color:var(--green)">&#x25B6; Crystallize</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ╔══════════════════════════════════════════════════════════════╗
-// ║  EchoSeed v4.2 — Complete JavaScript/D3.js Implementation  ║
+// ║  EchoSeed v4.3 — Complete JavaScript/D3.js Implementation  ║
 // ╚══════════════════════════════════════════════════════════════╝
 
 // ===== CONSTANTS =====
@@ -421,6 +490,17 @@ const DORMANCY_THRESHOLD  = 500;
 const REACTIVATION_PROBABILITY = 0.1;
 const SEASON_DURATION  = 100;
 const EMBED_DIM        = 32;   // simplified embedding dimension
+
+// ===== HIGGS FIELD =====
+// Sinusoidal oscillation — deterministic per glyph index
+const HIGGS = i => Math.round(Math.sin(i / 5) * 10000) / 10000;
+const HIGGS_COLORS = { EXPANDING: '#e3b341', EMERGENT: '#e3b341', CRITICAL: '#3fb950', CONTRACTING: '#388bfd', COLLAPSING: '#388bfd' };
+function higgsLabel(h) {
+  return h > 0.7 ? 'EXPANDING' : h > 0.2 ? 'EMERGENT' : h > -0.2 ? 'CRITICAL' : h > -0.7 ? 'CONTRACTING' : 'COLLAPSING';
+}
+function higgsColor(h) {
+  return h > 0.2 ? '#e3b341' : h > -0.2 ? '#3fb950' : '#388bfd';
+}
 
 // ===== ORIGIN CLAMPING =====
 const ORIGIN_CHILD_CAP      = 12;    // max direct children per origin node
@@ -464,6 +544,9 @@ let dormantGlyphs        = {};
 let running          = false;
 let animFrameId      = null;
 let lastStepTime     = 0;
+let latticeSeed      = '';       // conceptual seed for root nodes
+let snapshotGen      = null;     // null = live, number = frozen at generation
+let colorMode        = 'domain'; // 'domain' or 'higgs'
 
 // Origin clamping state
 let originChildCount = {};   // id -> number of direct children spawned
@@ -737,7 +820,9 @@ function fitness(g) {
   if (currentSeason === SeasonalPhase.EXPLORATION && sem > 0.7) seasonalBonus = 50;
   else if (currentSeason === SeasonalPhase.CONSOLIDATION && conceptualAttractors[g.id]) seasonalBonus = 75;
   else if (currentSeason === SeasonalPhase.RENAISSANCE && g.tags.includes('singularity')) seasonalBonus = 100;
-  return 200 * sem - g.entropy + 50 * influence + seasonalBonus;
+  // Higgs field modulation — expanding nodes get fitness boost, collapsing get penalty
+  const higgsBonus = (g.higgs || 0) * 30;
+  return 200 * sem - g.entropy + 50 * influence + seasonalBonus + higgsBonus;
 }
 
 // ===== SIGNATURE & NOVELTY CHECK =====
@@ -799,12 +884,15 @@ function createGlyph() {
   const numTags = randInt(1, 3);
   const tagSet = new Set();
   for (let i = 0; i < numTags; i++) tagSet.add(randomTag());
+  const id = genId();
   const g = {
-    id: genId(),
+    id: id,
     tags: [...tagSet],
     entropy: 0,
+    higgs: HIGGS(id),
     ancestry: [],
-    generationBorn: generationCount
+    generationBorn: generationCount,
+    resonance_src: null
   };
   g.entropy = calcEntropy(g);
   g.vec = embed(g.tags);
@@ -892,20 +980,56 @@ function trackOriginSpawn(parent, childId) {
   }
 }
 
+// ===== RESONANT PREDECESSOR =====
+// Find the most thematically resonant glyph from a candidate pool
+// Uses cosine similarity on embeddings + higgs field alignment
+function findResonantPredecessor(child, parents) {
+  if (glyphLog.length < 3) return null;
+  const poolSize = Math.min(glyphLog.length, 12);
+  const candidates = glyphLog.slice(-poolSize).filter(g =>
+    !parents.some(p => p.id === g.id) && g.id !== child.id
+  );
+  if (candidates.length === 0) return null;
+
+  let best = null, bestScore = -Infinity;
+  const childVec = embed(child.tags);
+  for (const c of candidates) {
+    // Cosine similarity (semantic resonance)
+    const sim = 1 - cosineDistance(childVec, c.vec);
+    // Higgs field alignment — bonus when fields are close
+    const higgsAlign = 1 - Math.abs(child.higgs - c.higgs);
+    // Combined score
+    const score = sim * 0.7 + higgsAlign * 0.3;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return bestScore > 0.3 ? best : null;
+}
+
 // ===== COLLISION =====
 function collide(a, b) {
   // Origin clamping: if either parent is a clamped origin, skip
   if (isOriginClamped(a) || isOriginClamped(b)) return;
 
   const childTags = new Set([...a.tags, ...b.tags, mutateTag([...a.tags, ...b.tags])]);
+  const id = genId();
   const child = {
-    id: genId(),
+    id: id,
     tags: [...childTags],
     entropy: 0,
+    higgs: HIGGS(id),
     ancestry: [a.id, b.id],
-    generationBorn: generationCount
+    generationBorn: generationCount,
+    resonance_src: null
   };
   child.entropy = calcEntropy(child);
+
+  // Resonant predecessor — find the most thematically resonant ancestor
+  const resonant = findResonantPredecessor(child, [a, b]);
+  if (resonant) {
+    child.resonance_src = resonant.id;
+    addEdge(resonant.id, child.id);
+  }
+
   maybeStore(child);
   addEdge(a.id, child.id);
   addEdge(b.id, child.id);
@@ -1189,6 +1313,19 @@ function performDeepAnalysis() {
   const el = document.getElementById('analysis');
   let html = `<h3 style="color:var(--accent);margin-bottom:8px;">Analysis @ Gen ${generationCount}</h3>`;
 
+  // Higgs field stats
+  if (glyphLog.length > 0) {
+    const higgsVals = glyphLog.map(g => g.higgs != null ? g.higgs : HIGGS(g.id));
+    const avgH = (higgsVals.reduce((s, h) => s + h, 0) / higgsVals.length).toFixed(4);
+    const expanding = higgsVals.filter(h => h > 0.2).length;
+    const critical = higgsVals.filter(h => h > -0.2 && h <= 0.2).length;
+    const contracting = higgsVals.filter(h => h <= -0.2).length;
+    const resonanceLinks = glyphLog.filter(g => g.resonance_src != null).length;
+    html += `<div style="margin-bottom:8px;"><b style="color:var(--yellow)">Higgs Field</b><br>`;
+    html += `Avg: ${avgH} | Expanding: ${expanding} | Critical: ${critical} | Contracting: ${contracting}<br>`;
+    html += `Resonant Links: ${resonanceLinks}</div>`;
+  }
+
   // Network stats
   html += `<div style="margin-bottom:8px;"><b>Network</b><br>`;
   html += `Nodes: ${graphNodes.size} | Edges: ${graphEdges.length}<br>`;
@@ -1263,7 +1400,8 @@ function generationStep() {
   const g = createGlyph();
   const stored = maybeStore(g);
   if (stored) {
-    addLog(`New <span class="id">${g.id}</span> [<span class="tag">${g.tags.join(', ')}</span>] e=${g.entropy}`);
+    const hc = higgsColor(g.higgs);
+    addLog(`New <span class="id">${g.id}</span> [<span class="tag">${g.tags.join(', ')}</span>] e=${g.entropy} <span style="color:${hc}">H=${g.higgs >= 0 ? '+' : ''}${g.higgs}</span>${g.resonance_src != null ? ` <span style="color:var(--purple)">→[${g.resonance_src}]</span>` : ''}`);
   }
 
   // Batch collide (reduced for browser perf)
@@ -1298,19 +1436,42 @@ function generationStep() {
 // ===== ENGINE CONTROL =====
 function startEngine() {
   if (running) return;
+
+  // Show seed modal on first launch (no glyphs yet)
+  if (glyphLog.length === 0) {
+    document.getElementById('seed-modal').style.display = 'flex';
+    document.getElementById('seed-input').focus();
+    return;
+  }
+
+  // Resume
+  launchEngine();
+}
+
+function dismissSeedModal() {
+  document.getElementById('seed-modal').style.display = 'none';
+}
+
+function launchWithSeed(seedValue) {
+  dismissSeedModal();
+  latticeSeed = seedValue;
+  document.getElementById('stat-seed').textContent = seedValue ? '"' + seedValue.slice(0, 30) + (seedValue.length > 30 ? '...' : '') + '"' : 'none';
+
+  // Create initial glyphs influenced by seed
+  for (let i = 0; i < 10; i++) {
+    const g = createGlyph();
+    if (seedValue) g.seed = seedValue;
+    maybeStore(g);
+  }
+  addLog(`Initialized with ${glyphLog.length} seed glyphs` + (seedValue ? ` — seed: "${seedValue}"` : ''));
+  launchEngine();
+}
+
+function launchEngine() {
   running = true;
   document.getElementById('btn-start').classList.add('active');
   document.getElementById('btn-stop').classList.remove('stop');
-
-  // Seed glyphs if empty
-  if (glyphLog.length === 0) {
-    for (let i = 0; i < 10; i++) {
-      const g = createGlyph();
-      maybeStore(g);
-    }
-    addLog(`Initialized with ${glyphLog.length} seed glyphs`);
-  }
-
+  exitSnapshot(); // exit snapshot mode on resume
   lastStepTime = performance.now();
   requestAnimationFrame(engineLoop);
 }
@@ -1320,6 +1481,42 @@ function stopEngine() {
   document.getElementById('btn-start').classList.remove('active');
   document.getElementById('btn-stop').classList.add('stop');
   if (animFrameId) cancelAnimationFrame(animFrameId);
+}
+
+// ===== SNAPSHOT MODE =====
+function enterSnapshot(gen) {
+  snapshotGen = gen;
+  const banner = document.getElementById('snapshot-banner');
+  banner.style.display = 'block';
+  banner.textContent = `SNAPSHOT — T=${gen} / ${generationCount}`;
+  document.getElementById('btn-snapshot-exit').style.display = 'inline-block';
+  document.getElementById('snapshot-label').textContent = `T=${gen}`;
+  document.getElementById('snapshot-label').style.color = '#58a6ff';
+  // Refresh graph to show only glyphs up to this generation
+  updateGraphData();
+}
+
+function exitSnapshot() {
+  snapshotGen = null;
+  document.getElementById('snapshot-banner').style.display = 'none';
+  document.getElementById('btn-snapshot-exit').style.display = 'none';
+  document.getElementById('snapshot-label').textContent = 'LIVE';
+  document.getElementById('snapshot-label').style.color = '#8b949e';
+  document.getElementById('snapshot-slider').value = document.getElementById('snapshot-slider').max;
+  updateGraphData();
+}
+
+function setColorMode(mode) {
+  colorMode = mode;
+  document.querySelectorAll('#color-domain,#color-higgs').forEach(b => b.classList.remove('active'));
+  document.getElementById('color-' + mode).classList.add('active');
+  // Force graph re-render
+  if (graph3d) {
+    graph3d.nodeColor(node => {
+      const g = id2glyph[node.id];
+      return mode === 'higgs' ? higgsColor(g ? g.higgs : 0) : glyphColor(g);
+    });
+  }
 }
 
 function engineLoop(timestamp) {
@@ -1358,6 +1555,23 @@ function updateStats() {
     const avgE = (glyphLog.slice(-100).reduce((s, g) => s + g.entropy, 0) /
                   Math.min(100, glyphLog.length)).toFixed(0);
     document.getElementById('stat-avg-entropy').textContent = avgE;
+  }
+
+  // Higgs field — show value for next node that would be created
+  const nextHiggs = HIGGS(glyphId);
+  const hc = higgsColor(nextHiggs);
+  const hEl = document.getElementById('stat-higgs');
+  hEl.textContent = (nextHiggs >= 0 ? '+' : '') + nextHiggs;
+  hEl.style.color = hc;
+  const hsEl = document.getElementById('stat-higgs-state');
+  hsEl.textContent = higgsLabel(nextHiggs);
+  hsEl.style.color = hc;
+
+  // Update snapshot slider max
+  if (glyphLog.length > 0) {
+    const slider = document.getElementById('snapshot-slider');
+    slider.max = generationCount;
+    if (snapshotGen === null) slider.value = generationCount;
   }
 
   // Season bar
@@ -1536,7 +1750,10 @@ function initGraph() {
       const r = glyphRadius(g);
       return r * r; // nodeVal is volume-like, so square the radius
     })
-    .nodeColor(node => glyphColor(id2glyph[node.id]))
+    .nodeColor(node => {
+      const g = id2glyph[node.id];
+      return colorMode === 'higgs' ? higgsColor(g ? g.higgs : 0) : glyphColor(g);
+    })
     .nodeOpacity(0.9)
     .nodeResolution(8)
     // Link appearance
@@ -1595,7 +1812,12 @@ function updateGraphData() {
   if (!graph3d) return;
   const maxNodes = parseInt(document.getElementById('max-nodes-slider').value);
 
-  const recentGlyphs = glyphLog.slice(-maxNodes);
+  // In snapshot mode, only show glyphs born at or before the snapshot generation
+  let pool = glyphLog;
+  if (snapshotGen !== null) {
+    pool = glyphLog.filter(g => (g.generationBorn || 0) <= snapshotGen);
+  }
+  const recentGlyphs = pool.slice(-maxNodes);
   const nodeIds = new Set(recentGlyphs.map(g => g.id));
 
   // Build nodes — preserve existing positions
@@ -1642,12 +1864,16 @@ function showTooltip3D(node) {
   const domainColor = DOMAIN_COLORS[domain] || '#c9d1d9';
   const tt = document.getElementById('tooltip');
   tt.style.display = 'block';
+  const hc = higgsColor(g.higgs || 0);
+  const resSrc = g.resonance_src != null ? id2glyph[g.resonance_src] : null;
   tt.innerHTML = `
     <div class="tt-id">${g.id}</div>
     <div style="color:${domainColor};font-size:10px;margin-bottom:3px;">${domain.toUpperCase()}</div>
+    <div class="tt-higgs" style="color:${hc}">Higgs: ${g.higgs != null ? ((g.higgs >= 0 ? '+' : '') + g.higgs) : '?'} — ${higgsLabel(g.higgs || 0)}</div>
     <div class="tt-tags">Tags: ${g.tags.join(', ')}</div>
     <div class="tt-entropy">Entropy: ${g.entropy}</div>
     <div class="tt-ancestry">Ancestry: ${(g.ancestry||[]).join(', ') || 'none'}</div>
+    ${resSrc ? `<div class="tt-resonance">Resonant: [${resSrc.id}] ${resSrc.tags.slice(0,3).join(', ')}</div>` : ''}
     ${g.reflexProfile ? `<div style="color:var(--purple)">Reflex: ${g.reflexProfile.type} (${g.reflexProfile.intensity.toFixed(2)})</div>` : ''}
     ${conceptualAttractors[g.id] ? '<div style="color:var(--red)">Conceptual Attractor</div>' : ''}
   `;
@@ -1669,19 +1895,30 @@ function inspectGlyph(node) {
   const nov = semanticNovelty(g.vec);
   const fit = fitness(g);
 
+  const hc = higgsColor(g.higgs || 0);
+  const resSrc = g.resonance_src != null ? id2glyph[g.resonance_src] : null;
+  const higgsPct = ((((g.higgs || 0) + 1) / 2) * 100).toFixed(0);
+
   document.getElementById('inspector').innerHTML = `
     <div style="margin-bottom:8px;">
       <span style="color:var(--accent);font-size:14px;font-weight:bold;">${g.id}</span>
     </div>
     <div><b>Tags:</b> <span style="color:var(--green)">${g.tags.join(', ')}</span></div>
     <div><b>Entropy:</b> <span style="color:var(--yellow)">${g.entropy}</span></div>
+    <div style="margin-top:4px;padding:4px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+      <b>Higgs:</b> <span style="color:${hc};font-weight:bold;">${g.higgs != null ? ((g.higgs >= 0 ? '+' : '') + g.higgs) : '?'}</span>
+      — <span style="color:${hc}">${higgsLabel(g.higgs || 0)}</span>
+      <div class="higgs-bar" style="clip-path:inset(0 ${100 - higgsPct}% 0 0);"></div>
+    </div>
     <div><b>Generation Born:</b> ${g.generationBorn || 0}</div>
     <div><b>Ancestry:</b> ${(g.ancestry||[]).join(', ') || 'none'}</div>
+    ${resSrc ? `<div><b>Resonant Link:</b> <span style="color:var(--purple);cursor:pointer;" onclick="inspectGlyph({id:${resSrc.id}})">[${resSrc.id}]</span> ${resSrc.tags.slice(0,3).join(', ')}</div>` : ''}
     <div><b>Children:</b> ${children.length}</div>
     <div><b>Influence:</b> ${inf.toFixed(3)}</div>
     <div><b>Novelty:</b> ${nov.toFixed(3)}</div>
     <div><b>Fitness:</b> ${fit.toFixed(1)}</div>
     <div><b>Stagnant:</b> ${stagnantCounter[g.id] || 0} gens</div>
+    ${g.seed ? `<div><b>Seed:</b> <span style="color:var(--yellow)">"${g.seed}"</span></div>` : ''}
     ${g.reflexProfile ? `
     <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
       <b>Reflex Profile</b><br>
@@ -1792,23 +2029,49 @@ function switchTab(name) {
 
 // ===== EXPORT =====
 function saveLogsToFile() {
-  const data = glyphLog.map(g => ({
+  const glyphs = glyphLog.map(g => ({
     id: g.id,
     tags: g.tags,
     entropy: g.entropy,
+    higgs: g.higgs != null ? g.higgs : HIGGS(g.id),
+    higgs_state: higgsLabel(g.higgs != null ? g.higgs : HIGGS(g.id)),
     ancestry: g.ancestry || [],
     generationBorn: g.generationBorn || 0,
-    reflexProfile: g.reflexProfile || null
+    resonance_src: g.resonance_src ?? null,
+    reflexProfile: g.reflexProfile || null,
+    seed: g.seed || null
   }));
 
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const avgHiggs = glyphs.length
+    ? (glyphs.reduce((s, g) => s + g.higgs, 0) / glyphs.length).toFixed(4)
+    : '0.0000';
+
+  const manifest = {
+    meta: {
+      title: 'EchoSeed Crystallized Thought Stream',
+      exported_at: new Date().toISOString(),
+      generation: generationCount,
+      glyph_count: glyphs.length,
+      link_count: graphEdges.length,
+      avg_higgs: parseFloat(avgHiggs),
+      higgs_range: glyphs.length ? [
+        Math.min(...glyphs.map(g => g.higgs)),
+        Math.max(...glyphs.map(g => g.higgs))
+      ] : [0, 0],
+      seed: latticeSeed || null,
+      season: currentSeason
+    },
+    glyphs
+  };
+
+  const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `echoseed_export_gen${generationCount}.json`;
+  a.download = `echoseed_manifest_gen${generationCount}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  addLog(`Exported ${data.length} glyphs to JSON`);
+  addLog(`Exported manifest: ${glyphs.length} glyphs, avg higgs ${avgHiggs}`);
 }
 
 // ===== SLIDER EVENTS =====
@@ -1817,6 +2080,23 @@ document.getElementById('rate-slider').addEventListener('input', function() {
 });
 document.getElementById('max-nodes-slider').addEventListener('input', function() {
   document.getElementById('max-nodes-label').textContent = this.value;
+});
+
+// Snapshot slider
+document.getElementById('snapshot-slider').addEventListener('input', function() {
+  const val = parseInt(this.value);
+  const max = parseInt(this.max);
+  if (val >= max) {
+    exitSnapshot();
+  } else {
+    enterSnapshot(val);
+  }
+});
+
+// Seed modal keyboard
+document.getElementById('seed-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') launchWithSeed(this.value.trim());
+  if (e.key === 'Escape') dismissSeedModal();
 });
 
 // ===== WINDOW RESIZE =====
