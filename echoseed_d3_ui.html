@@ -1863,9 +1863,9 @@ function initGraph() {
       const tId = typeof link.target === 'object' ? link.target.id : link.target;
       return edgeThickness(id2glyph[sId], id2glyph[tId]);
     })
-    // Alpha config — high velocity decay prevents bounce/oscillation
-    .d3AlphaDecay(0.03)
-    .d3VelocityDecay(0.6)
+    // Alpha config — high velocity decay kills bounce/oscillation
+    .d3AlphaDecay(0.05)
+    .d3VelocityDecay(0.8)
     // Interactions
     .onNodeHover(node => {
       const el = document.getElementById('3d-graph');
@@ -1937,32 +1937,23 @@ function updateGraphData() {
   }
 
   // Vertebrae constants (must match setView)
-  const VRT_RINGS = 8;           // entropy bands per disc
-  const VRT_RING_SPACING = 18;   // radial gap between rings (tight discs)
-  const VRT_GENS_PER_DISC = 10;  // generations per vertebra
+  const VRT_RINGS = 8;           // concentric rings per disc
+  const VRT_RING_SPACING = 18;   // radial gap between rings
+  const VRT_GENS_PER_DISC = VRT_RINGS; // 1 gen = 1 ring, disc fills then stacks
   const VRT_DISC_GAP = 120;      // vertical gap between disc centers
-
-  // Entropy range for ring banding
-  let minEnt = Infinity, maxEnt = -Infinity;
-  for (const g of recentGlyphs) {
-    if (g.entropy < minEnt) minEnt = g.entropy;
-    if (g.entropy > maxEnt) maxEnt = g.entropy;
-  }
-  if (!isFinite(minEnt)) { minEnt = 0; maxEnt = 1; }
-  const entRange = (maxEnt - minEnt) || 1;
 
   const nodes = recentGlyphs.map(g => {
     const existing = existingById[g.id];
     const node = { id: g.id };
 
-    // Compute disc and ring for this glyph
+    // Which disc and which ring within that disc
     const gen = g.generationBorn || 0;
     const disc = Math.floor(gen / VRT_GENS_PER_DISC);
-    const norm = ((g.entropy || 0) - minEnt) / entRange;
-    const ring = Math.min(VRT_RINGS - 1, Math.floor(norm * VRT_RINGS));
+    const genInDisc = gen % VRT_GENS_PER_DISC;  // 0=center, 7=outer
+    const ring = genInDisc;  // grow outward: gen 0→ring 0 (inner), gen 7→ring 7 (outer)
     const r = (ring + 1) * VRT_RING_SPACING;
     const idx = parseInt(g.id.replace(/\D/g, ''), 10) || 0;
-    const angle = idx * 2.39996;
+    const angle = idx * 2.39996;  // golden angle for even spread
 
     // Cache targets on glyph for forces
     g._ringR = r;
@@ -2089,31 +2080,32 @@ function setView(mode) {
 
   if (!graph3d) return;
 
-  // Vertebrae spine: compact discs (8 entropy rings) stacked vertically.
-  // Tight charge + strong position forces = flat discs with clear gaps.
-  graph3d.d3Force('charge').strength(-8).distanceMax(100);
-  graph3d.d3Force('link').distance(12).strength(0.02);
+  // Vertebrae spine: position forces pin nodes to their targets,
+  // minimal charge just prevents overlap. High velocityDecay (0.8)
+  // on the simulation kills any bounce.
+  graph3d.d3Force('charge').strength(-5).distanceMax(80);
+  graph3d.d3Force('link').distance(10).strength(0.01);
   graph3d.d3Force('radial', null);
 
-  // Hold nodes at their ring positions on x/z plane
+  // Pin nodes to ring positions on x/z plane
   graph3d.d3Force('posX', d3.forceX(d => {
     const g = id2glyph[d.id];
     if (!g || !g._ringR) return 0;
     return Math.cos(g._ringAngle) * g._ringR;
-  }).strength(0.5));
+  }).strength(0.4));
 
   graph3d.d3Force('posZ', d3.forceZ(d => {
     const g = id2glyph[d.id];
     if (!g || !g._ringR) return 0;
     return Math.sin(g._ringAngle) * g._ringR;
-  }).strength(0.5));
+  }).strength(0.4));
 
-  // Y-axis: strong lock to disc level keeps vertebrae flat and separated
+  // Y-axis: pin to disc level
   graph3d.d3Force('posY', d3.forceY(d => {
     const g = id2glyph[d.id];
     if (!g) return 0;
     return g._discY || 0;
-  }).strength(0.9));
+  }).strength(0.8));
 
   graph3d.d3ReheatSimulation();
 }
