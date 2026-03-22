@@ -352,10 +352,7 @@
     </div>
     <button id="btn-save" onclick="saveLogsToFile()">Export JSON</button>
     <div class="view-modes">
-      <button class="active" id="view-force" onclick="setView('force')">Force</button>
-      <button id="view-radial" onclick="setView('radial')">Radial</button>
-      <button id="view-hierarchy" onclick="setView('hierarchy')">Tree</button>
-      <button id="view-concentric" onclick="setView('concentric')">Concentric</button>
+      <button class="active" id="view-concentric" onclick="setView('concentric')">Concentric</button>
     </div>
     <div class="view-modes">
       <button class="active" id="color-domain" onclick="setColorMode('domain')">Domain</button>
@@ -1768,7 +1765,7 @@ if (!d3.forceZ) {
 
 // ===== 3D FORCE GRAPH =====
 let graph3d = null;
-let currentView = 'force';
+let currentView = 'concentric';
 let graphUpdateTimer = null;
 let currentGraphData = { nodes: [], links: [] };
 
@@ -1882,19 +1879,14 @@ function initGraph() {
     })
     .graphData({ nodes: [], links: [] });
 
-  // Configure the INTERNAL 3D forces (don't replace with 2D d3.v7 forces)
-  graph3d.d3Force('charge').strength(-120).distanceMax(600);
-  graph3d.d3Force('link').id(d => d.id).distance(120).strength(0.15);
-
-  // Add collision — need to get the force constructor from the internal engine
-  // The internal sim uses d3-force-3d, so we grab a force from it
-  const internalSim = graph3d.d3Force('charge');
-  // For collision, we can add it via the simulation directly
-  // Access the internal d3 simulation to add a 3D-aware collision force
-  // 3d-force-graph doesn't ship forceCollide by default, so we skip it
-  // (nodes are rendered as spheres that don't need SVG collision detection)
+  // Configure the INTERNAL 3D forces
+  graph3d.d3Force('charge').strength(-100).distanceMax(600);
+  graph3d.d3Force('link').id(d => d.id).distance(90).strength(0.06);
 
   scheduleGraphUpdate();
+
+  // Apply concentric view once data starts flowing
+  setTimeout(() => setView('concentric'), 500);
 }
 
 function scheduleGraphUpdate() {
@@ -2051,7 +2043,7 @@ function inspectGlyph(node) {
   );
 }
 
-// ===== VIEW MODES =====
+// ===== VIEW MODE =====
 function setView(mode) {
   currentView = mode;
   document.querySelectorAll('.view-modes button').forEach(b => b.classList.remove('active'));
@@ -2059,95 +2051,31 @@ function setView(mode) {
 
   if (!graph3d) return;
 
-  // Clear all custom positional forces before applying new mode
-  graph3d
-    .d3Force('posX', null)
-    .d3Force('posY', null)
-    .d3Force('posZ', null)
-    .d3Force('radial', null);
+  // Concentric: rings by generation, low entropy center / high entropy outer
+  graph3d.d3Force('charge').strength(-100).distanceMax(600);
+  graph3d.d3Force('link').distance(90).strength(0.06);
 
-  if (mode === 'force') {
-    // Standard 3D force layout
-    graph3d.d3Force('charge').strength(-120).distanceMax(600);
-    graph3d.d3Force('link').distance(120).strength(0.15);
+  const RING_GENS = 50;
+  const GEN_SPACING = 100;
+  const ENTROPY_SCALE = 0.6;
 
-    graph3d.d3ReheatSimulation();
+  // Radial force — generation sets the ring, entropy pushes outward
+  graph3d.d3Force('radial', d3.forceRadial(d => {
+    const g = id2glyph[d.id];
+    if (!g) return 120;
+    const gen = g.generationBorn || 0;
+    const bucket = Math.floor(gen / RING_GENS);
+    const entropyRadius = (g.entropy || 0) * ENTROPY_SCALE;
+    return (bucket + 1) * GEN_SPACING + entropyRadius;
+  }, 0, 0).strength(0.5));
 
-  } else if (mode === 'radial') {
-    // Radial: spiral by generation + entropy radius, spread on z
-    graph3d.d3Force('charge').strength(-80).distanceMax(500);
-    graph3d.d3Force('link').distance(80).strength(0.12);
+  // Spread on z-axis by generation so rings stack into a helix
+  graph3d.d3Force('posZ', d3.forceZ(d => {
+    const g = id2glyph[d.id];
+    return g ? ((g.generationBorn || 0) % 200) * 1.4 - 140 : 0;
+  }).strength(0.1));
 
-    // Position nodes in a spiral by generation
-    for (const n of currentGraphData.nodes) {
-      const g = id2glyph[n.id];
-      if (g) {
-        const angle = ((g.generationBorn || 0) / 100) * Math.PI * 2;
-        const r = 100 + (g.entropy || 0) * 0.5;
-        n.x = Math.cos(angle) * r;
-        n.y = Math.sin(angle) * r;
-        n.z = ((g.generationBorn || 0) % 50) * 3 - 75;
-      }
-    }
-
-    // Gentle pull toward center on all 3 axes using forceZ polyfill for z
-    graph3d
-      .d3Force('posX', d3.forceX(0).strength(0.03))
-      .d3Force('posY', d3.forceY(0).strength(0.03))
-      .d3Force('posZ', d3.forceZ(0).strength(0.03));
-
-    graph3d.d3ReheatSimulation();
-
-  } else if (mode === 'hierarchy') {
-    // Hierarchy: y = ancestry depth, x/z = force-spread
-    graph3d.d3Force('charge').strength(-90).distanceMax(500);
-    graph3d.d3Force('link').distance(100).strength(0.25);
-
-    // Position by ancestry depth on y-axis
-    for (const n of currentGraphData.nodes) {
-      const g = id2glyph[n.id];
-      if (g) {
-        const depth = (g.ancestry || []).length;
-        n.y = -depth * 40;
-      }
-    }
-
-    graph3d
-      .d3Force('posY', d3.forceY(d => {
-        const g = id2glyph[d.id];
-        return g ? -(g.ancestry || []).length * 40 : 0;
-      }).strength(0.3))
-      .d3Force('posX', d3.forceX(0).strength(0.05));
-
-    graph3d.d3ReheatSimulation();
-
-  } else if (mode === 'concentric') {
-    // Concentric: rings by generation, low entropy center / high entropy outer
-    graph3d.d3Force('charge').strength(-60).distanceMax(400);
-    graph3d.d3Force('link').distance(60).strength(0.08);
-
-    const RING_GENS = 50;
-    const GEN_SPACING = 60;
-    const ENTROPY_SCALE = 0.4;
-
-    // Radial force — generation sets the ring, entropy pushes outward
-    graph3d.d3Force('radial', d3.forceRadial(d => {
-      const g = id2glyph[d.id];
-      if (!g) return 80;
-      const gen = g.generationBorn || 0;
-      const bucket = Math.floor(gen / RING_GENS);
-      const entropyRadius = (g.entropy || 0) * ENTROPY_SCALE;
-      return (bucket + 1) * GEN_SPACING + entropyRadius;
-    }, 0, 0).strength(0.6));
-
-    // Spread on z-axis by generation so rings stack into a helix
-    graph3d.d3Force('posZ', d3.forceZ(d => {
-      const g = id2glyph[d.id];
-      return g ? ((g.generationBorn || 0) % 200) * 0.8 - 80 : 0;
-    }).strength(0.12));
-
-    graph3d.d3ReheatSimulation();
-  }
+  graph3d.d3ReheatSimulation();
 }
 
 // ===== TAB SWITCHING =====
