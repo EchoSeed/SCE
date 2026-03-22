@@ -1562,6 +1562,18 @@ function logClickGlyph(id) {
   const g = id2glyph[id];
   if (!g) return;
   inspectGlyph({ id });
+  // Fly camera to the node
+  if (graph3d) {
+    const node = currentGraphData.nodes.find(n => n.id === id);
+    if (node) {
+      const dist = 120;
+      const ratio = 1 + dist / Math.max(1, Math.hypot(node.x, node.y, node.z));
+      graph3d.cameraPosition(
+        { x: node.x * ratio, y: node.y * ratio, z: node.z * ratio },
+        node, 800
+      );
+    }
+  }
 }
 
 function renderLog() {
