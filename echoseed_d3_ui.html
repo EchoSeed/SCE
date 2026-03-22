@@ -2306,10 +2306,8 @@ function updateGraphData() {
 
   // Vertebrae constants (must match setView)
   const VRT_RINGS = 12;              // concentric rings per disc
-  const VRT_RING_SPACING = 40;       // radial gap between rings — wider for breathing room
-  const VRT_NODES_PER_DISC = 1000;   // nodes before next disc
-  const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // ~84
-  const VRT_DISC_GAP = 250;          // vertical gap between disc centers
+  const VRT_RING_SPACING = 40;       // radial gap between rings
+  const VRT_DISC_GAP = 300;          // vertical gap between disc centers
 
   // Sort by birth order so disc/ring assignment is stable and fills outward
   const sorted = [...recentGlyphs].sort((a, b) =>
@@ -2318,8 +2316,8 @@ function updateGraphData() {
   );
 
   // Build ring capacity proportional to circumference so nodes are evenly spaced.
-  // Min arc spacing ~12 units between adjacent nodes on the same ring.
-  const MIN_ARC = 12;
+  // Min arc spacing of 18 units → ~1000 nodes per disc across 12 rings.
+  const MIN_ARC = 18;
   const ringCapacity = [];
   let totalCap = 0;
   for (let r = 0; r < VRT_RINGS; r++) {
@@ -2488,7 +2486,7 @@ function setView(mode) {
   if (!graph3d) return;
 
   // Vertebrae spine: position forces pin nodes firmly to targets.
-  // Charge distanceMax must be well under VRT_DISC_GAP (200) so
+  // Charge distanceMax must be well under VRT_DISC_GAP (300) so
   // nodes on different discs never repel each other across the gap.
   graph3d.d3Force('charge').strength(-18).distanceMax(60);
   graph3d.d3Force('link').distance(30).strength(0.008);
