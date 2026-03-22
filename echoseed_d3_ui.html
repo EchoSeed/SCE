@@ -1158,10 +1158,20 @@ function findSemanticallyDistantGlyph(ref) {
 function determineReflexType(g, contextGlyphs) {
   const avgEntropy = contextGlyphs.reduce((s, c) => s + c.entropy, 0) / Math.max(1, contextGlyphs.length);
   const entropyRatio = g.entropy / Math.max(1, avgEntropy);
-  const semIso = semanticNovelty(g.vec);
+
+  // Use MEAN cosine distance for reflex classification.
+  // semanticNovelty() returns MAX over 100 samples, which is almost
+  // always > 0.8 in a diverse population — making EXPLORATORY dominate.
+  // Mean distance gives a balanced distribution across reflex types.
+  const s = sample(contextGlyphs, Math.min(50, contextGlyphs.length));
+  let totalDist = 0;
+  for (const c of s) {
+    if (c.vec) totalDist += cosineDistance(g.vec, c.vec);
+  }
+  const semIso = s.length > 0 ? totalDist / s.length : 0.5;
 
   if (entropyRatio < 0.5 && semIso < 0.3) return ReflexType.DEFENSIVE;
-  if (semIso > 0.8) return ReflexType.EXPLORATORY;
+  if (semIso > 0.6) return ReflexType.EXPLORATORY;
   if (g.tags.length > 3 && entropyRatio > 1.2) return ReflexType.COLLABORATIVE;
   if (conceptualAttractors[g.id]) return ReflexType.CONSOLIDATIVE;
   return ReflexType.METAMORPHIC;
