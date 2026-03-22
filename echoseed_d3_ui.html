@@ -929,7 +929,9 @@ function createGlyph() {
     higgs: HIGGS(idx),
     ancestry: [],
     generationBorn: generationCount,
-    resonance_src: null
+    resonance_src: null,
+    theta: Math.random() * 2 * Math.PI,
+    omega: (Math.random() - 0.5) * 0.4
   };
   g.entropy = calcEntropy(g);
   g.vec = embed(g.tags);
@@ -1057,7 +1059,9 @@ function collide(a, b) {
     higgs: HIGGS(idx),
     ancestry: [a.id, b.id],
     generationBorn: generationCount,
-    resonance_src: null
+    resonance_src: null,
+    theta: Math.random() * 2 * Math.PI,
+    omega: (Math.random() - 0.5) * 0.4
   };
   child.entropy = calcEntropy(child);
 
@@ -1173,6 +1177,8 @@ function createReflexGlyph(parent, reflexType) {
     ancestry: [parent.id],
     generationBorn: generationCount,
     resonance_src: null,
+    theta: Math.random() * 2 * Math.PI,
+    omega: (Math.random() - 0.5) * 0.4,
     reflexProfile: {
       type: reflexType,
       intensity: Math.random() * 0.5 + 0.5,
@@ -1461,6 +1467,62 @@ function renderLog() {
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
 
+// ===== KURAMOTO COUPLING =====
+const KURAMOTO_BASE_K = 0.3;  // base coupling strength
+let kuramotoOrderData = [];    // {gen, r} for chart overlay
+
+function kuramotoStep() {
+  if (glyphLog.length < 2) return;
+
+  // K modulated by season and global Higgs mean
+  const seasonK = {
+    [SeasonalPhase.EXPLORATION]:   1.0,
+    [SeasonalPhase.CONSOLIDATION]: 1.8,
+    [SeasonalPhase.DORMANCY]:      0.4,
+    [SeasonalPhase.RENAISSANCE]:   1.4
+  };
+  const recent = glyphLog.slice(-200);
+  const avgHiggs = recent.reduce((s, g) => s + (g.higgs || 0), 0) / recent.length;
+  // Higgs > 0 (expanding) strengthens coupling; < 0 weakens it
+  const K = KURAMOTO_BASE_K * (seasonK[currentSeason] || 1.0) * (1 + avgHiggs);
+
+  // Compute phase deltas (θ̇ᵢ = ωᵢ + K/dᵢ Σⱼ sin(θⱼ − θᵢ))
+  const deltas = new Map();
+  for (const g of glyphLog) {
+    if (g.theta == null) { g.theta = Math.random() * 2 * Math.PI; g.omega = (Math.random() - 0.5) * 0.4; }
+    const neighbors = adjacency.get(g.id);
+    let coupling = 0;
+    const di = neighbors ? neighbors.size : 0;
+    if (di > 0) {
+      for (const nid of neighbors) {
+        const nb = id2glyph[nid];
+        if (nb && nb.theta != null) coupling += Math.sin(nb.theta - g.theta);
+      }
+      coupling = (K / di) * coupling;
+    }
+    deltas.set(g.id, g.omega + coupling);
+  }
+
+  // Apply updates
+  for (const g of glyphLog) {
+    const d = deltas.get(g.id);
+    if (d != null) g.theta = (g.theta + d) % (2 * Math.PI);
+  }
+}
+
+// Kuramoto order parameter: r = |1/N Σ e^(iθ)|
+function kuramotoOrderParam() {
+  if (glyphLog.length === 0) return 0;
+  let sumCos = 0, sumSin = 0;
+  for (const g of glyphLog) {
+    if (g.theta == null) continue;
+    sumCos += Math.cos(g.theta);
+    sumSin += Math.sin(g.theta);
+  }
+  const N = glyphLog.length;
+  return Math.sqrt(sumCos * sumCos + sumSin * sumSin) / N;
+}
+
 // ===== GENERATION LOOP =====
 function generationStep() {
   generationCount++;
@@ -1484,6 +1546,9 @@ function generationStep() {
 
   // Batch collide (reduced for browser perf)
   batchCollide(10);
+
+  // Kuramoto phase coupling (every 3 gens for perf)
+  if (generationCount % 3 === 0) kuramotoStep();
 
   // Reflex test (every 10 gens)
   if (generationCount % 10 === 0) reflexTest();
@@ -1682,12 +1747,16 @@ const ENTROPY_MAX_POINTS = 200;
 function updateEntropyChart() {
   if (glyphLog.length === 0) return;
 
-  // Sample entropy data
+  // Sample entropy + Kuramoto order param data
   if (generationCount % 5 === 0) {
     const recent = glyphLog.slice(-50);
     const avg = recent.reduce((s, g) => s + g.entropy, 0) / recent.length;
     entropyData.push({ gen: generationCount, entropy: avg });
     if (entropyData.length > ENTROPY_MAX_POINTS) entropyData.shift();
+
+    const r = kuramotoOrderParam();
+    kuramotoOrderData.push({ gen: generationCount, r: r });
+    if (kuramotoOrderData.length > ENTROPY_MAX_POINTS) kuramotoOrderData.shift();
   }
 
   if (entropyData.length < 2) return;
@@ -1695,7 +1764,7 @@ function updateEntropyChart() {
   const container = document.getElementById('entropy-chart');
   const W = container.clientWidth;
   const H = container.clientHeight || 100;
-  const margin = { top: 5, right: 5, bottom: 18, left: 30 };
+  const margin = { top: 5, right: 30, bottom: 18, left: 30 };
 
   d3.select('#entropy-chart svg').remove();
   const svg = d3.select('#entropy-chart').append('svg')
@@ -1708,7 +1777,12 @@ function updateEntropyChart() {
     .domain([0, d3.max(entropyData, d => d.entropy) * 1.1])
     .range([H - margin.bottom, margin.top]);
 
-  // Area
+  // Right y-axis scale for r ∈ [0, 1]
+  const yR = d3.scaleLinear()
+    .domain([0, 1])
+    .range([H - margin.bottom, margin.top]);
+
+  // Entropy area
   const area = d3.area()
     .x(d => x(d.gen))
     .y0(H - margin.bottom)
@@ -1720,7 +1794,7 @@ function updateEntropyChart() {
     .attr('fill', 'rgba(210,153,34,0.15)')
     .attr('d', area);
 
-  // Line
+  // Entropy line
   const line = d3.line()
     .x(d => x(d.gen))
     .y(d => y(d.entropy))
@@ -1733,7 +1807,34 @@ function updateEntropyChart() {
     .attr('stroke-width', 1.5)
     .attr('d', line);
 
-  // Axes
+  // Kuramoto r overlay (cyan)
+  if (kuramotoOrderData.length >= 2) {
+    const rArea = d3.area()
+      .x(d => x(d.gen))
+      .y0(H - margin.bottom)
+      .y1(d => yR(d.r))
+      .curve(d3.curveBasis);
+
+    svg.append('path')
+      .datum(kuramotoOrderData)
+      .attr('fill', 'rgba(56,180,253,0.08)')
+      .attr('d', rArea);
+
+    const rLine = d3.line()
+      .x(d => x(d.gen))
+      .y(d => yR(d.r))
+      .curve(d3.curveBasis);
+
+    svg.append('path')
+      .datum(kuramotoOrderData)
+      .attr('fill', 'none')
+      .attr('stroke', '#38b4fd')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '4,2')
+      .attr('d', rLine);
+  }
+
+  // Left axis (entropy)
   svg.append('g')
     .attr('transform', `translate(0,${H - margin.bottom})`)
     .call(d3.axisBottom(x).ticks(4).tickSize(3))
@@ -1745,6 +1846,13 @@ function updateEntropyChart() {
     .call(d3.axisLeft(y).ticks(3).tickSize(3))
     .attr('font-size', '8px')
     .attr('color', '#484f58');
+
+  // Right axis (r)
+  svg.append('g')
+    .attr('transform', `translate(${W - margin.right},0)`)
+    .call(d3.axisRight(yR).ticks(3).tickSize(3))
+    .attr('font-size', '8px')
+    .attr('color', '#38b4fd');
 }
 
 // ===== forceZ polyfill (d3-force only has forceX/Y, 3D needs Z) =====
