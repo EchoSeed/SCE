@@ -1208,7 +1208,13 @@ function createReflexGlyph(parent, reflexType) {
 
 function reflexTest() {
   const context = glyphLog.slice(-100);
-  const targets = glyphLog.filter(g => g.tags.includes('vacuum') && g.entropy < 150);
+  // Target low-entropy glyphs that aren't already reflex offspring.
+  // Use population average as the baseline — absolute thresholds can't
+  // keep up with the logarithmic generation pressure in calcEntropy.
+  const threshold = populationAvgEntropy * 0.6;
+  const targets = glyphLog.filter(g =>
+    g.entropy < threshold && !g.reflexProfile && !g.tags.includes('observer')
+  );
   // Limit to avoid performance issues
   const limited = targets.slice(-5);
 
