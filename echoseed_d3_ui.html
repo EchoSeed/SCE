@@ -1815,6 +1815,11 @@ function launchEngine() {
   document.getElementById('btn-stop').classList.remove('stop');
   exitSnapshot(); // exit snapshot mode on resume
   lastStepTime = performance.now();
+  // Resume graph data updates and unfreeze the D3 force sim
+  if (!graphUpdateTimer) scheduleGraphUpdate();
+  if (graph3d) {
+    try { graph3d.d3AlphaTarget(0.08); setTimeout(() => { try { graph3d.d3AlphaTarget(0); } catch(_){} }, 300); } catch(_){}
+  }
   requestAnimationFrame(engineLoop);
 }
 
@@ -1823,6 +1828,17 @@ function stopEngine() {
   document.getElementById('btn-start').classList.remove('active');
   document.getElementById('btn-stop').classList.add('stop');
   if (animFrameId) cancelAnimationFrame(animFrameId);
+  // Stop graph data interval so we don't keep poking the sim
+  if (graphUpdateTimer) { clearInterval(graphUpdateTimer); graphUpdateTimer = null; }
+  // Freeze the D3 force simulation immediately — kills all residual bounce
+  if (graph3d) {
+    try { graph3d.d3AlphaTarget(0); } catch(_){}
+    // Zero out all node velocities
+    const gd = graph3d.graphData();
+    if (gd && gd.nodes) {
+      for (const n of gd.nodes) { n.vx = 0; n.vy = 0; n.vz = 0; }
+    }
+  }
 }
 
 // ===== SNAPSHOT MODE =====
@@ -2296,14 +2312,20 @@ function updateGraphData() {
   const cappedLinks = links.length > 1500 ? links.slice(-1500) : links;
 
   const prevCount = currentGraphData.nodes.length;
+  const prevLinkCount = currentGraphData.links ? currentGraphData.links.length : 0;
+
+  // Skip graphData push entirely if nothing changed — avoids sim disturbance
+  if (nodes.length === prevCount && cappedLinks.length === prevLinkCount) return;
+
   currentGraphData = { nodes, links: cappedLinks };
   graph3d.graphData(currentGraphData);
 
   // Only gently warm the simulation when new nodes appear — skip full reheat
-  if (nodes.length > prevCount && graph3d.d3Force) {
-    const sim = graph3d.d3Force('link') && graph3d.d3Force('link').links && graph3d;
-    // Nudge alpha just enough to settle new nodes, not shake existing ones
-    try { graph3d.d3AlphaTarget(0.08).d3AlphaTarget(0); } catch (_) {}
+  if (nodes.length > prevCount) {
+    try {
+      graph3d.d3AlphaTarget(0.06);
+      setTimeout(() => { try { graph3d.d3AlphaTarget(0); } catch(_){} }, 200);
+    } catch (_) {}
   }
 }
 
@@ -2410,32 +2432,32 @@ function setView(mode) {
 
   if (!graph3d) return;
 
-  // Vertebrae spine: position forces pin nodes to their targets,
-  // minimal charge just prevents overlap. High velocityDecay (0.8)
-  // on the simulation kills any bounce.
+  // Vertebrae spine: position forces pin nodes firmly to targets,
+  // minimal charge just prevents overlap, high position strength
+  // ensures nodes settle quickly with no residual bounce.
   graph3d.d3Force('charge').strength(-8).distanceMax(120);
   graph3d.d3Force('link').distance(18).strength(0.01);
   graph3d.d3Force('radial', null);
 
-  // Pin nodes to ring positions on x/z plane
+  // Pin nodes to ring positions on x/z plane — strong pull eliminates drift
   graph3d.d3Force('posX', d3.forceX(d => {
     const g = id2glyph[d.id];
     if (!g || !g._ringR) return 0;
     return Math.cos(g._ringAngle) * g._ringR;
-  }).strength(0.4));
+  }).strength(0.7));
 
   graph3d.d3Force('posZ', d3.forceZ(d => {
     const g = id2glyph[d.id];
     if (!g || !g._ringR) return 0;
     return Math.sin(g._ringAngle) * g._ringR;
-  }).strength(0.4));
+  }).strength(0.7));
 
-  // Y-axis: pin to disc level
+  // Y-axis: pin to disc level — near-rigid vertical placement
   graph3d.d3Force('posY', d3.forceY(d => {
     const g = id2glyph[d.id];
     if (!g) return 0;
     return g._discY || 0;
-  }).strength(0.8));
+  }).strength(0.95));
 
   // Gentle warmup instead of full reheat to avoid visual jerk
   try { graph3d.d3AlphaTarget(0.15).d3AlphaTarget(0); } catch (_) {}
