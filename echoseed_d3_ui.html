@@ -589,6 +589,7 @@ let uniqueTags      = new Set();   // all individual tags ever seen
 let tagCombos       = new Map();   // sorted combo key -> { count, firstSeen (gen), glyphIds[] }
 
 let running          = false;
+let selectedNodeId   = null;
 let animFrameId      = null;
 let lastStepTime     = 0;
 let latticeSeed      = '';       // conceptual seed for root nodes
@@ -1560,19 +1561,7 @@ function linkifyLogMsg(msg) {
 function logClickGlyph(id) {
   const g = id2glyph[id];
   if (!g) return;
-  inspectGlyph({ id }, { switchToTab: false });
-  // Focus camera on the node
-  if (graph3d) {
-    const node = currentGraphData.nodes.find(n => n.id === id);
-    if (node) {
-      const dist = 120;
-      const ratio = 1 + dist / Math.max(1, Math.hypot(node.x, node.y, node.z));
-      graph3d.cameraPosition(
-        { x: node.x * ratio, y: node.y * ratio, z: node.z * ratio },
-        node, 800
-      );
-    }
-  }
+  inspectGlyph({ id });
 }
 
 function renderLog() {
@@ -1988,6 +1977,7 @@ function setColorMode(mode) {
   // Force graph re-render
   if (graph3d) {
     graph3d.nodeColor(node => {
+      if (node.id === selectedNodeId) return '#ffffff';
       const g = id2glyph[node.id];
       return mode === 'higgs' ? higgsColor(g ? g.higgs : 0) : glyphColor(g);
     });
@@ -2289,6 +2279,7 @@ function initGraph() {
       return r * r; // nodeVal is volume-like, so square the radius
     })
     .nodeColor(node => {
+      if (node.id === selectedNodeId) return '#ffffff';
       const g = id2glyph[node.id];
       return colorMode === 'higgs' ? higgsColor(g ? g.higgs : 0) : glyphColor(g);
     })
@@ -2322,6 +2313,10 @@ function initGraph() {
     })
     .onNodeClick(node => {
       if (node) inspectGlyph(node);
+    })
+    .onBackgroundClick(() => {
+      selectedNodeId = null;
+      if (graph3d) graph3d.nodeColor(graph3d.nodeColor());
     })
     .graphData({ nodes: [], links: [] });
 
@@ -2490,10 +2485,12 @@ function hideTooltip() {
 
 // ── Inspector (click on node) ──
 
-function inspectGlyph(node, { switchToTab = true } = {}) {
+function inspectGlyph(node) {
   const g = id2glyph[node.id];
   if (!g) return;
-  if (switchToTab) switchTab('inspector');
+  selectedNodeId = node.id;
+  if (graph3d) graph3d.nodeColor(graph3d.nodeColor()); // refresh colors
+  switchTab('inspector');
 
   const children = getChildren(g);
   const inf = calculateInfluence(g);
