@@ -1938,9 +1938,9 @@ function updateGraphData() {
 
   // Vertebrae constants (must match setView)
   const VRT_RINGS = 8;           // entropy bands per disc
-  const VRT_RING_SPACING = 40;   // radial gap between rings
-  const VRT_GENS_PER_DISC = 50;  // generations that fill one disc
-  const VRT_DISC_GAP = 400;      // vertical gap between disc centers
+  const VRT_RING_SPACING = 18;   // radial gap between rings (tight discs)
+  const VRT_GENS_PER_DISC = 10;  // generations per vertebra
+  const VRT_DISC_GAP = 120;      // vertical gap between disc centers
 
   // Entropy range for ring banding
   let minEnt = Infinity, maxEnt = -Infinity;
@@ -2089,11 +2089,10 @@ function setView(mode) {
 
   if (!graph3d) return;
 
-  // Concentric vertebrae: N generations fill a disc (8 entropy rings),
-  // then the next batch stacks vertically above it.
-  // Positions seeded in updateGraphData; forces hold the shape.
-  graph3d.d3Force('charge').strength(-20).distanceMax(200);
-  graph3d.d3Force('link').distance(20).strength(0.03);
+  // Vertebrae spine: compact discs (8 entropy rings) stacked vertically.
+  // Tight charge + strong position forces = flat discs with clear gaps.
+  graph3d.d3Force('charge').strength(-8).distanceMax(100);
+  graph3d.d3Force('link').distance(12).strength(0.02);
   graph3d.d3Force('radial', null);
 
   // Hold nodes at their ring positions on x/z plane
@@ -2101,20 +2100,20 @@ function setView(mode) {
     const g = id2glyph[d.id];
     if (!g || !g._ringR) return 0;
     return Math.cos(g._ringAngle) * g._ringR;
-  }).strength(0.35));
+  }).strength(0.5));
 
   graph3d.d3Force('posZ', d3.forceZ(d => {
     const g = id2glyph[d.id];
     if (!g || !g._ringR) return 0;
     return Math.sin(g._ringAngle) * g._ringR;
-  }).strength(0.35));
+  }).strength(0.5));
 
-  // Y-axis: lock to disc level
+  // Y-axis: strong lock to disc level keeps vertebrae flat and separated
   graph3d.d3Force('posY', d3.forceY(d => {
     const g = id2glyph[d.id];
     if (!g) return 0;
     return g._discY || 0;
-  }).strength(0.7));
+  }).strength(0.9));
 
   graph3d.d3ReheatSimulation();
 }
