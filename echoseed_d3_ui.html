@@ -2210,8 +2210,9 @@ function initGraph() {
     })
     .graphData({ nodes: [], links: [] });
 
-  // Configure the INTERNAL 3D forces
-  graph3d.d3Force('charge').strength(-40).distanceMax(300);
+  // Configure the INTERNAL 3D forces — distanceMax kept under disc gap
+  // so charge repulsion never crosses between discs
+  graph3d.d3Force('charge').strength(-40).distanceMax(50);
   graph3d.d3Force('link').id(d => d.id).distance(30).strength(0.04);
 
   scheduleGraphUpdate();
@@ -2298,12 +2299,17 @@ function updateGraphData() {
 
     if (existing) {
       node.x = existing.x; node.y = existing.y; node.z = existing.z;
-      // Preserve velocity to avoid positional snapping
       node.vx = existing.vx || 0; node.vy = existing.vy || 0; node.vz = existing.vz || 0;
+      // Carry over fixed-position pins if still settling
+      if (existing.fx != null) { node.fx = existing.fx; node.fy = existing.fy; node.fz = existing.fz; }
     } else {
-      node.x = Math.cos(g._ringAngle) * g._ringR;
-      node.z = Math.sin(g._ringAngle) * g._ringR;
-      node.y = g._discY;
+      // New node: place at target and pin with fx/fy/fz so the sim
+      // can't push it around. Released after a short settle window.
+      const tx = Math.cos(g._ringAngle) * g._ringR;
+      const tz = Math.sin(g._ringAngle) * g._ringR;
+      const ty = g._discY || 0;
+      node.x = tx; node.y = ty; node.z = tz;
+      node.fx = tx; node.fy = ty; node.fz = tz;
     }
     return node;
   });
@@ -2320,12 +2326,17 @@ function updateGraphData() {
   currentGraphData = { nodes, links: cappedLinks };
   graph3d.graphData(currentGraphData);
 
-  // Only gently warm the simulation when new nodes appear — skip full reheat
+  // Release pinned nodes after a brief settle period (2s) so they
+  // can participate in gentle intra-disc charge repulsion only
   if (nodes.length > prevCount) {
-    try {
-      graph3d.d3AlphaTarget(0.06);
-      setTimeout(() => { try { graph3d.d3AlphaTarget(0); } catch(_){} }, 200);
-    } catch (_) {}
+    setTimeout(() => {
+      const gd = graph3d && graph3d.graphData();
+      if (gd && gd.nodes) {
+        for (const n of gd.nodes) {
+          if (n.fx != null) { n.fx = undefined; n.fy = undefined; n.fz = undefined; }
+        }
+      }
+    }, 2000);
   }
 }
 
@@ -2432,10 +2443,10 @@ function setView(mode) {
 
   if (!graph3d) return;
 
-  // Vertebrae spine: position forces pin nodes firmly to targets,
-  // minimal charge just prevents overlap, high position strength
-  // ensures nodes settle quickly with no residual bounce.
-  graph3d.d3Force('charge').strength(-8).distanceMax(120);
+  // Vertebrae spine: position forces pin nodes firmly to targets.
+  // Charge distanceMax must be well under VRT_DISC_GAP (120) so
+  // nodes on different discs never repel each other across the gap.
+  graph3d.d3Force('charge').strength(-8).distanceMax(50);
   graph3d.d3Force('link').distance(18).strength(0.01);
   graph3d.d3Force('radial', null);
 
