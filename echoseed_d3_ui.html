@@ -1936,6 +1936,12 @@ function updateGraphData() {
     existingById[n.id] = { x: n.x, y: n.y, z: n.z };
   }
 
+  // Vertebrae constants (must match setView)
+  const VRT_RINGS = 8;           // entropy bands per disc
+  const VRT_RING_SPACING = 40;   // radial gap between rings
+  const VRT_GENS_PER_DISC = 50;  // generations that fill one disc
+  const VRT_DISC_GAP = 400;      // vertical gap between disc centers
+
   // Entropy range for ring banding
   let minEnt = Infinity, maxEnt = -Infinity;
   for (const g of recentGlyphs) {
@@ -1945,28 +1951,30 @@ function updateGraphData() {
   if (!isFinite(minEnt)) { minEnt = 0; maxEnt = 1; }
   const entRange = (maxEnt - minEnt) || 1;
 
-  const VRT_RINGS = 8;
-  const VRT_RING_SPACING = 35;
-  const VRT_DISC_HEIGHT = 20;
-
   const nodes = recentGlyphs.map(g => {
     const existing = existingById[g.id];
     const node = { id: g.id };
+
+    // Compute disc and ring for this glyph
+    const gen = g.generationBorn || 0;
+    const disc = Math.floor(gen / VRT_GENS_PER_DISC);
+    const norm = ((g.entropy || 0) - minEnt) / entRange;
+    const ring = Math.min(VRT_RINGS - 1, Math.floor(norm * VRT_RINGS));
+    const r = (ring + 1) * VRT_RING_SPACING;
+    const idx = parseInt(g.id.replace(/\D/g, ''), 10) || 0;
+    const angle = idx * 2.39996;
+
+    // Cache targets on glyph for forces
+    g._ringR = r;
+    g._ringAngle = angle;
+    g._discY = disc * VRT_DISC_GAP;
+
     if (existing) {
       node.x = existing.x; node.y = existing.y; node.z = existing.z;
     } else {
-      // Seed new nodes into vertebrae position
-      const norm = ((g.entropy || 0) - minEnt) / entRange;
-      const ring = Math.min(VRT_RINGS - 1, Math.floor(norm * VRT_RINGS));
-      const r = (ring + 1) * VRT_RING_SPACING;
-      const idx = parseInt(g.id.replace(/\D/g, ''), 10) || 0;
-      const angle = idx * 2.39996;
-      // Cache ring target on glyph so forces can use the same values
-      g._ringR = r;
-      g._ringAngle = angle;
       node.x = Math.cos(angle) * r;
       node.z = Math.sin(angle) * r;
-      node.y = (g.generationBorn || 0) * VRT_DISC_HEIGHT;
+      node.y = g._discY;
     }
     return node;
   });
@@ -2081,39 +2089,31 @@ function setView(mode) {
 
   if (!graph3d) return;
 
-  // Concentric vertebrae: each generation is a disc stacked on Y,
-  // entropy determines which of 8 radial rings within each disc.
-  // Node positions are seeded in updateGraphData; forces hold ring shape.
+  // Concentric vertebrae: N generations fill a disc (8 entropy rings),
+  // then the next batch stacks vertically above it.
+  // Positions seeded in updateGraphData; forces hold the shape.
   graph3d.d3Force('charge').strength(-20).distanceMax(200);
   graph3d.d3Force('link').distance(20).strength(0.03);
   graph3d.d3Force('radial', null);
 
-  // Compute per-node ring targets for x/z forces
-  function ringTarget(d, axis) {
-    const g = id2glyph[d.id];
-    if (!g) return 0;
-    // Use cached ring target if available
-    if (!g._ringR) {
-      // Will be set by updateGraphData seeding; fallback calc here
-      const ent = g.entropy || 0;
-      g._ringR = 35 + (ent % 280);
-      const idx = parseInt(g.id.replace(/\D/g, ''), 10) || 0;
-      g._ringAngle = idx * 2.39996;
-    }
-    return axis === 'x'
-      ? Math.cos(g._ringAngle) * g._ringR
-      : Math.sin(g._ringAngle) * g._ringR;
-  }
-
   // Hold nodes at their ring positions on x/z plane
-  graph3d.d3Force('posX', d3.forceX(d => ringTarget(d, 'x')).strength(0.35));
-  graph3d.d3Force('posZ', d3.forceZ(d => ringTarget(d, 'z')).strength(0.35));
+  graph3d.d3Force('posX', d3.forceX(d => {
+    const g = id2glyph[d.id];
+    if (!g || !g._ringR) return 0;
+    return Math.cos(g._ringAngle) * g._ringR;
+  }).strength(0.35));
 
-  // Y-axis: each generation is a disc, stacking upward
+  graph3d.d3Force('posZ', d3.forceZ(d => {
+    const g = id2glyph[d.id];
+    if (!g || !g._ringR) return 0;
+    return Math.sin(g._ringAngle) * g._ringR;
+  }).strength(0.35));
+
+  // Y-axis: lock to disc level
   graph3d.d3Force('posY', d3.forceY(d => {
     const g = id2glyph[d.id];
     if (!g) return 0;
-    return (g.generationBorn || 0) * 20;
+    return g._discY || 0;
   }).strength(0.7));
 
   graph3d.d3ReheatSimulation();
