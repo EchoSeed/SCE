@@ -1863,9 +1863,9 @@ function initGraph() {
       const tId = typeof link.target === 'object' ? link.target.id : link.target;
       return edgeThickness(id2glyph[sId], id2glyph[tId]);
     })
-    // Alpha config
-    .d3AlphaDecay(0.02)
-    .d3VelocityDecay(0.3)
+    // Alpha config — high velocity decay prevents bounce/oscillation
+    .d3AlphaDecay(0.03)
+    .d3VelocityDecay(0.6)
     // Interactions
     .onNodeHover(node => {
       const el = document.getElementById('3d-graph');
