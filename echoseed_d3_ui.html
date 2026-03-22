@@ -351,6 +351,8 @@
       <span id="max-nodes-label">500</span>
     </div>
     <button id="btn-save" onclick="saveLogsToFile()">Export JSON</button>
+    <button id="btn-load" onclick="document.getElementById('import-file').click()">Import JSON</button>
+    <input type="file" id="import-file" accept=".json" style="display:none" onchange="importFromFile(this)">
     <div class="view-modes">
       <button class="active" id="view-concentric" onclick="setView('concentric')">Concentric</button>
     </div>
@@ -2135,6 +2137,148 @@ function saveLogsToFile() {
   a.click();
   URL.revokeObjectURL(url);
   addLog(`Exported manifest: ${glyphs.length} glyphs, avg higgs ${avgHiggs}`);
+}
+
+// ===== IMPORT =====
+function importFromFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';  // reset so same file can be re-imported
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    let manifest;
+    try {
+      manifest = JSON.parse(e.target.result);
+    } catch (err) {
+      alert('Invalid JSON file: ' + err.message);
+      return;
+    }
+
+    if (!manifest.glyphs || !Array.isArray(manifest.glyphs)) {
+      alert('Invalid manifest: missing glyphs array');
+      return;
+    }
+
+    // Stop any running engine
+    stopEngine();
+    exitSnapshot();
+
+    // ── Reset all core state ──
+    glyphLog = [];
+    id2glyph = {};
+    graphNodes = new Map();
+    graphEdges = [];
+    adjacency = new Map();
+    glyphId = 0;
+    generationCount = 0;
+    seenSignatures = new Set();
+    reflexFree = [];
+    stagnantCounter = {};
+    conceptualAttractors = {};
+    temporalClusters = {};
+    dormantGlyphs = {};
+    uniqueTags = new Set();
+    tagCombos = new Map();
+
+    // ── Restore metadata ──
+    const meta = manifest.meta || {};
+    generationCount = meta.generation || 0;
+    latticeSeed = meta.seed || '';
+    if (meta.season) currentSeason = meta.season;
+
+    // Restore tag_combos if present
+    if (manifest.tag_combos) {
+      for (const [key, val] of Object.entries(manifest.tag_combos)) {
+        tagCombos.set(key, { count: val.count, firstSeen: val.firstSeen, glyphIds: [] });
+      }
+    }
+
+    // ── Restore glyphs ──
+    let maxIdNum = 0;
+    for (const raw of manifest.glyphs) {
+      const g = {
+        id: raw.id,
+        tags: raw.tags || [],
+        entropy: raw.entropy || 0,
+        higgs: raw.higgs != null ? raw.higgs : 0,
+        ancestry: raw.ancestry || [],
+        generationBorn: raw.generationBorn || 0,
+        resonance_src: raw.resonance_src || null,
+        reflexProfile: raw.reflexProfile || null,
+        seed: raw.seed || null,
+        tagComboKey: raw.tagComboKey || tagComboKey(raw.tags || []),
+      };
+      // Rebuild embedding vector
+      g.vec = embed(g.tags);
+
+      glyphLog.push(g);
+      id2glyph[g.id] = g;
+
+      // Track tags
+      for (const t of g.tags) uniqueTags.add(t);
+
+      // Add to graph node map
+      graphNodes.set(g.id, { id: g.id, entropy: g.entropy, tags: g.tags });
+      if (!adjacency.has(g.id)) adjacency.set(g.id, new Set());
+
+      // Track max glyph ID number
+      const num = parseInt(g.id.replace(/\D/g, ''), 10);
+      if (!isNaN(num) && num > maxIdNum) maxIdNum = num;
+    }
+    glyphId = maxIdNum;
+
+    // ── Rebuild edges from ancestry + semantic similarity ──
+    // 1) Ancestry edges (parent → child)
+    for (const g of glyphLog) {
+      for (const parentId of g.ancestry) {
+        if (id2glyph[parentId]) {
+          addEdge(parentId, g.id, 1);
+        }
+      }
+    }
+
+    // 2) Semantic similarity edges (cosine distance between tag vectors)
+    const allGlyphs = glyphLog;
+    const SIM_THRESHOLD = 0.35;
+    const MAX_SIM_EDGES = 3000;
+    let simEdgeCount = 0;
+    for (let i = 0; i < allGlyphs.length && simEdgeCount < MAX_SIM_EDGES; i++) {
+      const a = allGlyphs[i];
+      if (!a.vec) continue;
+      // Only check nearby glyphs (within 100 gen window) for performance
+      for (let j = i + 1; j < allGlyphs.length && simEdgeCount < MAX_SIM_EDGES; j++) {
+        const b = allGlyphs[j];
+        if (!b.vec) continue;
+        if (Math.abs((a.generationBorn || 0) - (b.generationBorn || 0)) > 100) continue;
+        // Skip if already linked by ancestry
+        if (a.ancestry.includes(b.id) || b.ancestry.includes(a.id)) continue;
+        const dist = cosineDistance(a.vec, b.vec);
+        if (dist < SIM_THRESHOLD) {
+          addEdge(a.id, b.id, 1 - dist);
+          simEdgeCount++;
+        }
+      }
+    }
+
+    // ── Configure snapshot slider ──
+    const slider = document.getElementById('snapshot-slider');
+    slider.max = generationCount;
+    slider.value = generationCount;
+    document.getElementById('snapshot-label').textContent = 'LIVE';
+
+    // ── Update graph & UI ──
+    updateGraphData();
+    setView('concentric');
+    updateStats();
+    updateEntropyChart();
+
+    const edgeCount = graphEdges.length;
+    addLog(`Imported: ${glyphLog.length} glyphs, ${edgeCount} edges, gen ${generationCount}`, 'success');
+    addLog(`Snapshot slider ready — scrub to explore generations 0–${generationCount}`);
+  };
+
+  reader.readAsText(file);
 }
 
 // ===== SLIDER EVENTS =====
