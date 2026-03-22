@@ -437,6 +437,16 @@
       <div id="entropy-chart"></div>
     </div>
 
+    <!-- SAT Encoder -->
+    <div class="sidebar-section">
+      <h3>SAT &#x2192; Glyph Encoder</h3>
+      <textarea id="sat-input" rows="3" spellcheck="false"
+        style="width:100%;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:6px;font-family:monospace;font-size:11px;resize:vertical;"
+        placeholder="DIMACS CNF or shorthand&#10;e.g. (x1 | ~x2 | x3) &amp; (~x1 | x4)&#10;or: 1 -2 3 0 / -1 4 0"></textarea>
+      <button onclick="encodeSAT()" style="margin-top:4px;width:100%;padding:4px 0;font-size:11px;background:#238636;border:1px solid #2ea043;border-radius:4px;color:#fff;cursor:pointer;">Encode &amp; Inject</button>
+      <div id="sat-status" style="font-size:10px;color:#8b949e;margin-top:3px;"></div>
+    </div>
+
     <!-- Tabs: Inspector / Log / Analysis -->
     <div class="tab-bar">
       <button class="tab-btn active" onclick="switchTab('log')">Log</button>
@@ -1521,6 +1531,140 @@ function kuramotoOrderParam() {
   }
   const N = glyphLog.length;
   return Math.sqrt(sumCos * sumCos + sumSin * sumSin) / N;
+}
+
+// ===== SAT-TO-GLYPH ENCODER =====
+
+function parseSAT(input) {
+  const text = input.trim();
+  if (!text) return null;
+
+  const clauses = [];
+  const allVars = new Set();
+
+  // Try human-readable: (x1 | ~x2 | x3) & (~x1 | x4)
+  const parenMatch = text.match(/\([^)]+\)/g);
+  if (parenMatch) {
+    for (const group of parenMatch) {
+      const inner = group.replace(/[()]/g, '');
+      const lits = inner.split(/\s*[\|,]\s*/).map(s => s.trim()).filter(Boolean);
+      const clause = lits.map(lit => {
+        const neg = lit.startsWith('~') || lit.startsWith('-') || lit.startsWith('!');
+        const name = lit.replace(/^[~!-]+/, '').trim();
+        allVars.add(name);
+        return { var: name, neg };
+      });
+      if (clause.length) clauses.push(clause);
+    }
+  } else {
+    // DIMACS-style: "1 -2 3 0 / -1 4 0" or newline-separated
+    const lines = text.split(/[\/\n]+/);
+    for (const line of lines) {
+      const tokens = line.trim().split(/\s+/).filter(t => t !== '0' && t !== 'c' && t !== 'p' && t !== 'cnf' && t !== '');
+      if (!tokens.length) continue;
+      // Skip DIMACS header lines
+      if (tokens[0] === 'p' || tokens[0] === 'c') continue;
+      const clause = tokens.map(t => {
+        const n = parseInt(t, 10);
+        if (isNaN(n)) {
+          // treat as variable name
+          const neg = t.startsWith('-') || t.startsWith('~');
+          const name = t.replace(/^[-~]/, '');
+          allVars.add(name);
+          return { var: name, neg };
+        }
+        const name = 'x' + Math.abs(n);
+        allVars.add(name);
+        return { var: name, neg: n < 0 };
+      });
+      if (clause.length) clauses.push(clause);
+    }
+  }
+
+  return clauses.length ? { clauses, vars: [...allVars] } : null;
+}
+
+function encodeSAT() {
+  const input = document.getElementById('sat-input').value;
+  const parsed = parseSAT(input);
+  const statusEl = document.getElementById('sat-status');
+
+  if (!parsed) {
+    statusEl.textContent = 'Could not parse. Use (x1 | ~x2) & (x3) or DIMACS format.';
+    statusEl.style.color = '#f85149';
+    return;
+  }
+
+  const { clauses, vars } = parsed;
+
+  // 1) Create one glyph per variable (positive literal = tag, negated = "NOT_tag")
+  const varGlyphs = {};
+  for (const v of vars) {
+    const idx = glyphId + 1;
+    const id = genId();
+    const g = {
+      id, tags: [v, 'sat_var'],
+      entropy: 0, higgs: HIGGS(idx),
+      ancestry: [], generationBorn: generationCount,
+      resonance_src: null,
+      theta: Math.random() * 2 * Math.PI,
+      omega: (Math.random() - 0.5) * 0.4
+    };
+    g.entropy = calcEntropy(g);
+    maybeStore(g);
+    varGlyphs[v] = g;
+  }
+
+  // 2) Create one glyph per clause, tagged with its literals
+  const clauseGlyphs = [];
+  clauses.forEach((clause, ci) => {
+    const litTags = clause.map(l => l.neg ? ('NOT_' + l.var) : l.var);
+    const idx = glyphId + 1;
+    const id = genId();
+    const parentIds = clause.map(l => varGlyphs[l.var].id);
+    const g = {
+      id, tags: [...litTags, 'sat_clause', 'C' + ci],
+      entropy: 0, higgs: HIGGS(idx),
+      ancestry: parentIds, generationBorn: generationCount,
+      resonance_src: null,
+      theta: Math.random() * 2 * Math.PI,
+      omega: (Math.random() - 0.5) * 0.4
+    };
+    g.entropy = calcEntropy(g);
+    maybeStore(g);
+    clauseGlyphs.push(g);
+
+    // Edge from each variable glyph to its clause glyph
+    for (const l of clause) {
+      addEdge(varGlyphs[l.var].id, g.id, l.neg ? 0.5 : 1.5);
+    }
+  });
+
+  // 3) Connect clause glyphs that share variables (resolution edges)
+  for (let i = 0; i < clauseGlyphs.length; i++) {
+    for (let j = i + 1; j < clauseGlyphs.length; j++) {
+      const shared = clauses[i].filter(l1 =>
+        clauses[j].some(l2 => l1.var === l2.var)
+      );
+      if (shared.length > 0) {
+        addEdge(clauseGlyphs[i].id, clauseGlyphs[j].id, shared.length);
+      }
+    }
+  }
+
+  const totalGlyphs = vars.length + clauseGlyphs.length;
+  const totalEdges = clauses.reduce((s, c) => s + c.length, 0)
+    + clauseGlyphs.reduce((s, _, i) => {
+      let e = 0;
+      for (let j = i + 1; j < clauseGlyphs.length; j++) {
+        if (clauses[i].some(l1 => clauses[j].some(l2 => l1.var === l2.var))) e++;
+      }
+      return s + e;
+    }, 0);
+
+  statusEl.textContent = `Injected ${vars.length} vars + ${clauseGlyphs.length} clauses (${totalEdges} edges)`;
+  statusEl.style.color = '#3fb950';
+  addLog(`SAT encoded: ${vars.length} variables, ${clauses.length} clauses → ${totalGlyphs} glyphs, ${totalEdges} edges`);
 }
 
 // ===== GENERATION LOOP =====
