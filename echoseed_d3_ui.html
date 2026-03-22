@@ -176,7 +176,7 @@
   #log-filter-bar {
     display: flex; gap: 4px; padding: 4px 8px;
     border-bottom: 1px solid var(--border);
-    flex-wrap: wrap;
+    flex-wrap: wrap; flex-shrink: 0;
   }
   #log-filter-bar button {
     font-size: 10px; padding: 1px 6px; border-radius: 3px;
@@ -187,14 +187,17 @@
   #log-filter-bar button:hover { border-color: var(--fg); color: var(--fg); }
   #log-container {
     flex: 1;
-    overflow-y: auto;
+    min-height: 0;
+    overflow-y: scroll;
     padding: 8px 12px;
     font-size: 11px;
     font-family: 'SF Mono', 'Consolas', monospace;
     line-height: 1.5;
   }
   #log-container::-webkit-scrollbar { width: 6px; }
+  #log-container::-webkit-scrollbar-track { background: var(--bg); }
   #log-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  #log-container::-webkit-scrollbar-thumb:hover { background: var(--dim); }
   .log-entry { padding: 2px 0; border-radius: 3px; transition: background .1s; }
   .log-entry:hover { background: rgba(88,166,255,0.06); }
   .log-entry .gen { color: var(--accent); cursor: pointer; }
@@ -306,8 +309,8 @@
     border-bottom-color: var(--accent);
     background: none;
   }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
+  .tab-content { display: none; flex-direction: column; overflow: hidden; }
+  .tab-content.active { display: flex; flex: 1; min-height: 0; }
 
   /* ── Glyph inspector ── */
   #inspector {
@@ -534,9 +537,9 @@ const HIGGS = i => {
   const n = typeof i === 'string' ? parseInt(i.replace(/\D/g, ''), 10) || 0 : i;
   return Math.round(Math.sin(n / 5) * 10000) / 10000;
 };
-const HIGGS_COLORS = { EXPANDING: '#e3b341', EMERGENT: '#e3b341', CRITICAL: '#3fb950', CONTRACTING: '#388bfd', COLLAPSING: '#388bfd' };
+const HIGGS_COLORS = { EXPANDING: '#e3b341', EMERGENT: '#e3b341', CRITICAL: '#3fb950', CONTRACT: '#388bfd', COLLAPSING: '#388bfd' };
 function higgsLabel(h) {
-  return h > 0.7 ? 'EXPANDING' : h > 0.2 ? 'EMERGENT' : h > -0.2 ? 'CRITICAL' : h > -0.7 ? 'CONTRACTING' : 'COLLAPSING';
+  return h > 0.7 ? 'EXPANDING' : h > 0.2 ? 'EMERGENT' : h > -0.2 ? 'CRITICAL' : h > -0.7 ? 'CONTRACT' : 'COLLAPSING';
 }
 function higgsColor(h) {
   return h > 0.2 ? '#e3b341' : h > -0.2 ? '#3fb950' : '#388bfd';
@@ -1468,10 +1471,10 @@ function performDeepAnalysis() {
     const avgH = (higgsVals.reduce((s, h) => s + h, 0) / higgsVals.length).toFixed(4);
     const expanding = higgsVals.filter(h => h > 0.2).length;
     const critical = higgsVals.filter(h => h > -0.2 && h <= 0.2).length;
-    const contracting = higgsVals.filter(h => h <= -0.2).length;
+    const contract = higgsVals.filter(h => h <= -0.2).length;
     const resonanceLinks = glyphLog.filter(g => g.resonance_src != null).length;
     html += `<div style="margin-bottom:8px;"><b style="color:var(--yellow)">Higgs Field</b><br>`;
-    html += `Avg: ${avgH} | Expanding: ${expanding} | Critical: ${critical} | Contracting: ${contracting}<br>`;
+    html += `Avg: ${avgH} | Expanding: ${expanding} | Critical: ${critical} | Contract: ${contract}<br>`;
     html += `Resonant Links: ${resonanceLinks}</div>`;
   }
 
