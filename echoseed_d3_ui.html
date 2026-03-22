@@ -347,8 +347,8 @@
     </div>
     <div class="slider-group">
       <label>Max Nodes</label>
-      <input type="range" id="max-nodes-slider" min="100" max="10000" value="500" step="50">
-      <span id="max-nodes-label">500</span>
+      <input type="range" id="max-nodes-slider" min="100" max="20000" value="2000" step="100">
+      <span id="max-nodes-label">2000</span>
     </div>
     <button id="btn-save" onclick="saveLogsToFile()">Export JSON</button>
     <button id="btn-load" onclick="document.getElementById('import-file').click()">Import JSON</button>
@@ -486,10 +486,10 @@
 const MAX_RAM_GLYPHS   = 20000;
 const LOW_ENTROPY      = 100;
 const LOW_KEEP_PROB    = 0.025;
-const PRUNE_AFTER      = 10;     // prune stagnant nodes after 10 gens
+const PRUNE_AFTER      = 50;     // prune stagnant nodes after 50 gens (softened)
 const ATTRACTOR_THRESHOLD = 5;
 const DORMANCY_THRESHOLD  = 200;  // was 500 — faster dormancy transition
-const ISOLATE_PRUNE_AGE  = 50;   // prune connectionless nodes after 50 gens
+const ISOLATE_PRUNE_AGE  = 200;  // prune connectionless nodes after 200 gens (softened)
 const REACTIVATION_PROBABILITY = 0.1;
 const SEASON_DURATION  = 100;
 const EMBED_DIM        = 32;   // simplified embedding dimension
@@ -1488,8 +1488,8 @@ function generationStep() {
   // Reflex test (every 10 gens)
   if (generationCount % 10 === 0) reflexTest();
 
-  // Prune (every 20 gens — aggressive to match generation rate)
-  if (generationCount % 20 === 0) pruneStagnant();
+  // Prune (every 50 gens — softened to allow more growth)
+  if (generationCount % 50 === 0) pruneStagnant();
 
   // Rewire (every 25 gens)
   if (generationCount % 25 === 0) rewireShortcuts();
