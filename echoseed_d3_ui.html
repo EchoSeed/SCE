@@ -2305,11 +2305,11 @@ function updateGraphData() {
   }
 
   // Vertebrae constants (must match setView)
-  const VRT_RINGS = 12;              // concentric rings per disc (was 8)
-  const VRT_RING_SPACING = 32;       // radial gap between rings (was 24)
-  const VRT_NODES_PER_DISC = 2000;   // nodes before next disc (was 1000)
-  const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // ~167
-  const VRT_DISC_GAP = 200;          // vertical gap between disc centers (was 120)
+  const VRT_RINGS = 12;              // concentric rings per disc
+  const VRT_RING_SPACING = 40;       // radial gap between rings — wider for breathing room
+  const VRT_NODES_PER_DISC = 1000;   // nodes before next disc
+  const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // ~84
+  const VRT_DISC_GAP = 250;          // vertical gap between disc centers
 
   // Sort by birth order so disc/ring assignment is stable and fills outward
   const sorted = [...recentGlyphs].sort((a, b) =>
@@ -2317,14 +2317,31 @@ function updateGraphData() {
     (parseInt(a.id.replace(/\D/g,''),10)||0) - (parseInt(b.id.replace(/\D/g,''),10)||0)
   );
 
+  // Build ring capacity proportional to circumference so nodes are evenly spaced.
+  // Min arc spacing ~12 units between adjacent nodes on the same ring.
+  const MIN_ARC = 12;
+  const ringCapacity = [];
+  let totalCap = 0;
+  for (let r = 0; r < VRT_RINGS; r++) {
+    const radius = (r + 1) * VRT_RING_SPACING;
+    const cap = Math.max(4, Math.floor(2 * Math.PI * radius / MIN_ARC));
+    ringCapacity.push(cap);
+    totalCap += cap;
+  }
+
   // Assign each glyph a sequential index → disc, ring, slot
   sorted.forEach((g, i) => {
-    const disc = Math.floor(i / VRT_NODES_PER_DISC);
-    const indexInDisc = i % VRT_NODES_PER_DISC;
-    const ring = Math.floor(indexInDisc / VRT_NODES_PER_RING);
-    const slot = indexInDisc % VRT_NODES_PER_RING;
+    const disc = Math.floor(i / totalCap);
+    let indexInDisc = i % totalCap;
+    let ring = 0;
+    while (ring < VRT_RINGS - 1 && indexInDisc >= ringCapacity[ring]) {
+      indexInDisc -= ringCapacity[ring];
+      ring++;
+    }
+    const slot = indexInDisc;
+    const slotsInRing = ringCapacity[ring];
     const r = (ring + 1) * VRT_RING_SPACING;
-    const angle = slot * (2 * Math.PI / VRT_NODES_PER_RING) + ring * 0.3;
+    const angle = slot * (2 * Math.PI / slotsInRing) + ring * 0.3;
 
     g._ringR = r;
     g._ringAngle = angle;
@@ -2473,8 +2490,8 @@ function setView(mode) {
   // Vertebrae spine: position forces pin nodes firmly to targets.
   // Charge distanceMax must be well under VRT_DISC_GAP (200) so
   // nodes on different discs never repel each other across the gap.
-  graph3d.d3Force('charge').strength(-8).distanceMax(80);
-  graph3d.d3Force('link').distance(24).strength(0.01);
+  graph3d.d3Force('charge').strength(-18).distanceMax(60);
+  graph3d.d3Force('link').distance(30).strength(0.008);
   graph3d.d3Force('radial', null);
 
   // Pin nodes to ring positions on x/z plane — strong pull eliminates drift
