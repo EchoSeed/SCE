@@ -494,13 +494,13 @@
 // ╚══════════════════════════════════════════════════════════════╝
 
 // ===== CONSTANTS =====
-const MAX_RAM_GLYPHS   = 20000;
+const MAX_RAM_GLYPHS   = 30000;
 const LOW_ENTROPY      = 100;
 const LOW_KEEP_PROB    = 0.025;
-const PRUNE_AFTER      = 50;     // prune stagnant nodes after 50 gens (softened)
+const PRUNE_AFTER      = 120;    // prune stagnant nodes after 120 gens (hardened)
 const ATTRACTOR_THRESHOLD = 5;
-const DORMANCY_THRESHOLD  = 200;  // was 500 — faster dormancy transition
-const ISOLATE_PRUNE_AGE  = 200;  // prune connectionless nodes after 200 gens (softened)
+const DORMANCY_THRESHOLD  = 300;  // longer dormancy window before prune
+const ISOLATE_PRUNE_AGE  = 400;  // prune connectionless nodes after 400 gens (hardened)
 const REACTIVATION_PROBABILITY = 0.1;
 const SEASON_DURATION  = 100;
 const EMBED_DIM        = 32;   // simplified embedding dimension
@@ -1241,8 +1241,23 @@ function pruneStagnant() {
   for (const [nid] of graphNodes) {
     stagnantCounter[nid] = (stagnantCounter[nid] || 0) + 1;
     if (stagnantCounter[nid] > PRUNE_AFTER) {
+      // Protect high-value nodes from pruning
+      const g = id2glyph[nid];
+      const neighbors = adjacency.get(nid);
+      const degree = neighbors ? neighbors.size : 0;
+      const isProtected = g && (
+        g.reflexProfile ||                     // reflex glyphs are rare/valuable
+        g.resonance_src != null ||             // resonance-linked
+        degree >= 5 ||                         // well-connected hub
+        conceptualAttractors[nid]              // attractor
+      );
+      if (isProtected) {
+        // Reset stagnancy — protected nodes get another full window
+        stagnantCounter[nid] = 0;
+        continue;
+      }
+
       if (currentSeason === SeasonalPhase.DORMANCY &&
-          !conceptualAttractors[nid] &&
           stagnantCounter[nid] < DORMANCY_THRESHOLD) {
         toDormant.push(nid);
       } else {
@@ -1754,7 +1769,8 @@ function generationStep() {
   if (generationCount % 10 === 0) reflexTest();
 
   // Prune (every 50 gens — softened to allow more growth)
-  if (generationCount % 50 === 0) pruneStagnant();
+  // Prune less frequently — every 100 gens instead of 50
+  if (generationCount % 100 === 0) pruneStagnant();
 
   // Rewire (every 25 gens)
   if (generationCount % 25 === 0) rewireShortcuts();
@@ -2218,7 +2234,7 @@ function initGraph() {
 
   // Configure the INTERNAL 3D forces — distanceMax kept under disc gap
   // so charge repulsion never crosses between discs
-  graph3d.d3Force('charge').strength(-40).distanceMax(50);
+  graph3d.d3Force('charge').strength(-40).distanceMax(80);
   graph3d.d3Force('link').id(d => d.id).distance(30).strength(0.04);
 
   scheduleGraphUpdate();
@@ -2273,11 +2289,11 @@ function updateGraphData() {
   }
 
   // Vertebrae constants (must match setView)
-  const VRT_RINGS = 8;               // concentric rings per disc
-  const VRT_RING_SPACING = 24;       // radial gap between rings (wider for larger nodes)
-  const VRT_NODES_PER_DISC = 1000;   // nodes before next disc
-  const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // 125
-  const VRT_DISC_GAP = 120;          // vertical gap between disc centers
+  const VRT_RINGS = 12;              // concentric rings per disc (was 8)
+  const VRT_RING_SPACING = 32;       // radial gap between rings (was 24)
+  const VRT_NODES_PER_DISC = 2000;   // nodes before next disc (was 1000)
+  const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // ~167
+  const VRT_DISC_GAP = 200;          // vertical gap between disc centers (was 120)
 
   // Sort by birth order so disc/ring assignment is stable and fills outward
   const sorted = [...recentGlyphs].sort((a, b) =>
@@ -2323,7 +2339,7 @@ function updateGraphData() {
   });
 
   // Performance cap
-  const cappedLinks = links.length > 1500 ? links.slice(-1500) : links;
+  const cappedLinks = links.length > 3000 ? links.slice(-3000) : links;
 
   const prevCount = currentGraphData.nodes.length;
   const prevLinkCount = currentGraphData.links ? currentGraphData.links.length : 0;
@@ -2439,10 +2455,10 @@ function setView(mode) {
   if (!graph3d) return;
 
   // Vertebrae spine: position forces pin nodes firmly to targets.
-  // Charge distanceMax must be well under VRT_DISC_GAP (120) so
+  // Charge distanceMax must be well under VRT_DISC_GAP (200) so
   // nodes on different discs never repel each other across the gap.
-  graph3d.d3Force('charge').strength(-8).distanceMax(50);
-  graph3d.d3Force('link').distance(18).strength(0.01);
+  graph3d.d3Force('charge').strength(-8).distanceMax(80);
+  graph3d.d3Force('link').distance(24).strength(0.01);
   graph3d.d3Force('radial', null);
 
   // Pin nodes to ring positions on x/z plane — strong pull eliminates drift
