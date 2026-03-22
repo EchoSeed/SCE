@@ -2316,7 +2316,7 @@ function initGraph() {
     })
     .onBackgroundClick(() => {
       selectedNodeId = null;
-      if (graph3d) graph3d.nodeColor(graph3d.nodeColor());
+      if (graph3d) graph3d.nodeRelSize(graph3d.nodeRelSize());
     })
     .graphData({ nodes: [], links: [] });
 
@@ -2489,7 +2489,7 @@ function inspectGlyph(node) {
   const g = id2glyph[node.id];
   if (!g) return;
   selectedNodeId = node.id;
-  if (graph3d) graph3d.nodeColor(graph3d.nodeColor()); // refresh colors
+  if (graph3d) graph3d.nodeRelSize(graph3d.nodeRelSize()); // lightweight color refresh
   switchTab('inspector');
 
   const children = getChildren(g);
