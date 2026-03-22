@@ -397,6 +397,7 @@
         <div class="stat-item"><span class="label">Season Progress</span><span class="value" id="stat-season-prog">0/100</span></div>
         <div class="stat-item"><span class="label">Higgs Field</span><span class="value" id="stat-higgs" style="font-weight:bold;">0.0000</span></div>
         <div class="stat-item"><span class="label">Higgs State</span><span class="value" id="stat-higgs-state">CRITICAL</span></div>
+        <div class="stat-item"><span class="label">Coherence r</span><span class="value cyan" id="stat-coherence">0.00</span></div>
         <div class="stat-item"><span class="label">Seed</span><span class="value" id="stat-seed" style="color:#8b949e;font-size:10px;">none</span></div>
       </div>
       <div class="season-bar">
@@ -843,7 +844,12 @@ function fitness(g) {
   else if (currentSeason === SeasonalPhase.RENAISSANCE && g.tags.includes('singularity')) seasonalBonus = 100;
   // Higgs field modulation — expanding nodes get fitness boost, collapsing get penalty
   const higgsBonus = (g.higgs || 0) * 30;
-  return 200 * sem - g.entropy + 50 * influence + seasonalBonus + higgsBonus;
+  // SAT clause satisfaction bonus — strong evolutionary pressure
+  let satBonus = 0;
+  if (g.tags.includes('sat_clause')) {
+    satBonus = isClauseSatisfied(g) ? 150 : -200;
+  }
+  return 200 * sem - g.entropy + 50 * influence + seasonalBonus + higgsBonus + satBonus;
 }
 
 // ===== SIGNATURE & NOVELTY CHECK =====
@@ -1533,6 +1539,50 @@ function kuramotoOrderParam() {
   return Math.sqrt(sumCos * sumCos + sumSin * sumSin) / N;
 }
 
+// ===== SAT TRUTH & SATISFACTION =====
+
+function getVariableTruth(varName) {
+  const varGlyph = glyphLog.find(g => g.tags.includes(varName) && g.tags.includes('sat_var'));
+  if (!varGlyph) return false;
+  // Phase-based: θ near 0 = true, near π = false
+  if (varGlyph.theta != null) return Math.cos(varGlyph.theta) > 0;
+  // Fallback: entropy-based (lower entropy = more "settled" = true)
+  return varGlyph.entropy < populationAvgEntropy;
+}
+
+function isClauseSatisfied(clause) {
+  const neighbors = adjacency.get(clause.id);
+  if (!neighbors) return false;
+  for (const nid of neighbors) {
+    const nb = id2glyph[nid];
+    if (!nb || !nb.tags.includes('sat_var')) continue;
+    const varName = nb.tags.find(t => t !== 'sat_var');
+    if (!varName) continue;
+    const isNegated = clause.tags.includes('NOT_' + varName);
+    const varState = getVariableTruth(varName);
+    if ((!isNegated && varState) || (isNegated && !varState)) return true;
+  }
+  return false;
+}
+
+function detectSATSolution() {
+  const r = kuramotoOrderParam();
+  const allClauses = glyphLog.filter(g => g.tags.includes('sat_clause'));
+  if (allClauses.length === 0) return false;
+
+  let allSatisfied = true;
+  for (const clause of allClauses) {
+    if (!isClauseSatisfied(clause)) { allSatisfied = false; break; }
+  }
+
+  if (r > 0.92 && allSatisfied) {
+    addLog(`SAT SOLUTION FOUND at gen ${generationCount} (r=${r.toFixed(3)})`, 'solution');
+    stopEngine();
+    return true;
+  }
+  return false;
+}
+
 // ===== SAT-TO-GLYPH ENCODER =====
 
 function parseSAT(input) {
@@ -1709,6 +1759,11 @@ function generationStep() {
   // Deep analysis (every 500 gens)
   if (generationCount % 500 === 0 && glyphLog.length >= 100) performDeepAnalysis();
 
+  // SAT solution detection (every 10 gens, only if SAT glyphs exist)
+  if (generationCount % 10 === 0 && glyphLog.some(g => g.tags.includes('sat_clause'))) {
+    detectSATSolution();
+  }
+
   // Enforce max glyphs
   if (glyphLog.length > MAX_RAM_GLYPHS) {
     const excess = glyphLog.length - MAX_RAM_GLYPHS;
@@ -1869,6 +1924,12 @@ function updateStats() {
   const hsEl = document.getElementById('stat-higgs-state');
   hsEl.textContent = higgsLabel(nextHiggs);
   hsEl.style.color = hc;
+
+  // Kuramoto coherence display
+  const coherenceR = kuramotoOrderParam();
+  const cohEl = document.getElementById('stat-coherence');
+  cohEl.textContent = coherenceR.toFixed(4);
+  cohEl.style.color = coherenceR > 0.9 ? '#39d353' : coherenceR > 0.6 ? '#d29922' : '#8b949e';
 
   // Update snapshot slider max
   if (glyphLog.length > 0) {
