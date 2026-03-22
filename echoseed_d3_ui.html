@@ -356,6 +356,7 @@
       <button id="view-radial" onclick="setView('radial')">Radial</button>
       <button id="view-hierarchy" onclick="setView('hierarchy')">Tree</button>
       <button id="view-concentric" onclick="setView('concentric')">Concentric</button>
+      <button id="view-brain" onclick="setView('brain')">Brain</button>
     </div>
     <div class="view-modes">
       <button class="active" id="color-domain" onclick="setColorMode('domain')">Domain</button>
@@ -2147,6 +2148,230 @@ function setView(mode) {
     }).strength(0.12));
 
     graph3d.d3ReheatSimulation();
+
+  } else if (mode === 'brain') {
+    // ═══════════════════════════════════════════════════════
+    // NEURAL BRAIN MODE — synaptic network in brain topology
+    // ═══════════════════════════════════════════════════════
+
+    // Brain ellipsoid dimensions (wider than tall, like a real brain)
+    const BRAIN_X = 220;  // left-right (widest)
+    const BRAIN_Y = 160;  // top-bottom
+    const BRAIN_Z = 180;  // front-back
+
+    // Assign hemispheres by domain for clustering
+    const domainHemisphere = {};
+    const allDomains = Object.keys(DOMAIN_COLORS);
+    allDomains.forEach((d, i) => { domainHemisphere[d] = i % 2 === 0 ? -1 : 1; });
+
+    // Seed initial positions into brain shape
+    for (const n of currentGraphData.nodes) {
+      const g = id2glyph[n.id];
+      if (!g) continue;
+      const ent = g.entropy || 0;
+      const gen = g.generationBorn || 0;
+
+      // Cortex layer: high entropy = outer surface, low = deep core
+      const maxEnt = 1200;
+      const depth = Math.max(0.15, Math.min(1.0, ent / maxEnt));
+
+      // Angular position from generation + tag hash for spread
+      const theta = ((gen * 2.39996) % (Math.PI * 2));  // golden angle spiral
+      const phi = Math.acos(1 - 2 * ((gen * 0.618034) % 1));  // uniform sphere
+
+      // Hemisphere bias from domain
+      const domain = getNodeDomain(g);
+      const hemi = domainHemisphere[domain] || 1;
+
+      n.x = Math.sin(phi) * Math.cos(theta) * BRAIN_X * depth * (hemi > 0 ? Math.abs(Math.sin(phi) * Math.cos(theta)) + 0.3 : -(Math.abs(Math.sin(phi) * Math.cos(theta)) + 0.3));
+      n.y = Math.cos(phi) * BRAIN_Y * depth * 0.85;
+      n.z = Math.sin(phi) * Math.sin(theta) * BRAIN_Z * depth;
+    }
+
+    // Softer forces so the brain shape holds
+    graph3d.d3Force('charge').strength(-30).distanceMax(300);
+    graph3d.d3Force('link').distance(25).strength(0.4);
+
+    // Ellipsoid containment forces — keep nodes inside the brain volume
+    graph3d.d3Force('posX', d3.forceX(d => {
+      const g = id2glyph[d.id];
+      if (!g) return 0;
+      const domain = getNodeDomain(g);
+      const hemi = domainHemisphere[domain] || 1;
+      const ent = Math.max(0.15, Math.min(1.0, (g.entropy || 0) / 1200));
+      return hemi * BRAIN_X * ent * 0.45;
+    }).strength(0.18));
+
+    graph3d.d3Force('posY', d3.forceY(d => {
+      const g = id2glyph[d.id];
+      if (!g) return 0;
+      // Brainstem at bottom (low entropy), cortex on top (high entropy)
+      const ent = (g.entropy || 0) / 1200;
+      return (ent - 0.5) * BRAIN_Y * 0.6;
+    }).strength(0.12));
+
+    graph3d.d3Force('posZ', d3.forceZ(d => {
+      const g = id2glyph[d.id];
+      if (!g) return 0;
+      const gen = g.generationBorn || 0;
+      // Front-back placement from generation phase
+      return Math.sin(gen * 0.1) * BRAIN_Z * 0.35;
+    }).strength(0.1));
+
+    // ── Synaptic particle firing ──
+    graph3d
+      .linkDirectionalParticles(link => {
+        const sId = typeof link.source === 'object' ? link.source.id : link.source;
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+        const sg = id2glyph[sId], tg = id2glyph[tId];
+        if (!sg || !tg) return 1;
+        // More particles on high-entropy connections (busy synapses)
+        const delta = Math.abs(sg.entropy - tg.entropy);
+        return Math.max(1, Math.min(6, Math.floor(delta / 80)));
+      })
+      .linkDirectionalParticleSpeed(link => {
+        const sId = typeof link.source === 'object' ? link.source.id : link.source;
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+        const sg = id2glyph[sId], tg = id2glyph[tId];
+        if (!sg || !tg) return 0.006;
+        // High entropy delta = fast firing
+        const delta = Math.abs(sg.entropy - tg.entropy);
+        return 0.003 + delta * 0.00004;
+      })
+      .linkDirectionalParticleWidth(2.5)
+      .linkDirectionalParticleColor(link => {
+        const sId = typeof link.source === 'object' ? link.source.id : link.source;
+        const sg = id2glyph[sId];
+        if (!sg) return '#ffffff';
+        // Particle color matches source node's domain
+        return glyphColor(sg);
+      })
+      .linkWidth(link => {
+        // Thinner links in brain mode — axon-like
+        const sId = typeof link.source === 'object' ? link.source.id : link.source;
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+        return Math.max(0.15, edgeThickness(id2glyph[sId], id2glyph[tId]) * 0.4);
+      })
+      .linkOpacity(0.25)
+      .linkColor(() => '#1a3a5c');
+
+    // ── Custom pulsing glow nodes ──
+    graph3d.nodeThreeObject(node => {
+      const g = id2glyph[node.id];
+      const baseColor = colorMode === 'higgs'
+        ? higgsColor(g ? g.higgs : 0)
+        : glyphColor(g);
+      const color = new THREE.Color(baseColor);
+      const r = glyphRadius(g);
+
+      const group = new THREE.Group();
+
+      // Core sphere — emissive soma
+      const coreMat = new THREE.MeshPhongMaterial({
+        color: color,
+        emissive: color,
+        emissiveIntensity: 0.8,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const core = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 12), coreMat);
+      group.add(core);
+
+      // Outer glow shell — larger, transparent, pulsing
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.15,
+      });
+      const glow = new THREE.Mesh(new THREE.SphereGeometry(r * 2.5, 8, 8), glowMat);
+      group.add(glow);
+
+      // Stash refs for animation
+      group.userData = {
+        coreMat, glowMat, glow, core,
+        baseR: r,
+        entropy: g ? g.entropy : 0,
+        phase: Math.random() * Math.PI * 2,  // random start phase for organic feel
+      };
+
+      return group;
+    });
+
+    // ── Brain pulse animation loop ──
+    if (window._brainAnimId) cancelAnimationFrame(window._brainAnimId);
+    function brainPulse(t) {
+      if (currentView !== 'brain') {
+        // Clean up when leaving brain mode
+        return;
+      }
+      const scene = graph3d.scene();
+      if (scene) {
+        scene.traverse(obj => {
+          if (obj.isGroup && obj.userData && obj.userData.coreMat) {
+            const ud = obj.userData;
+            const speed = 0.001 + (ud.entropy / 1200) * 0.003;
+            const pulse = 0.5 + 0.5 * Math.sin(t * speed + ud.phase);
+
+            // Pulse emissive intensity
+            ud.coreMat.emissiveIntensity = 0.4 + pulse * 0.8;
+
+            // Pulse glow opacity and scale
+            ud.glowMat.opacity = 0.05 + pulse * 0.2;
+            const glowScale = 1.0 + pulse * 0.6;
+            ud.glow.scale.set(glowScale, glowScale, glowScale);
+          }
+        });
+      }
+      window._brainAnimId = requestAnimationFrame(brainPulse);
+    }
+    window._brainAnimId = requestAnimationFrame(brainPulse);
+
+    // ── Slow auto-rotation to show off the shape ──
+    const controls = graph3d.controls();
+    if (controls) {
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 0.8;
+    }
+
+    graph3d.d3ReheatSimulation();
+  }
+
+  // ── Clean up brain mode when switching away ──
+  if (mode !== 'brain') {
+    // Remove synaptic particles
+    if (graph3d.linkDirectionalParticles) {
+      graph3d
+        .linkDirectionalParticles(0)
+        .linkDirectionalParticleWidth(0)
+        .linkWidth(link => {
+          const sId = typeof link.source === 'object' ? link.source.id : link.source;
+          const tId = typeof link.target === 'object' ? link.target.id : link.target;
+          return edgeThickness(id2glyph[sId], id2glyph[tId]);
+        })
+        .linkOpacity(0.6)
+        .linkColor(link => {
+          const sId = typeof link.source === 'object' ? link.source.id : link.source;
+          const tId = typeof link.target === 'object' ? link.target.id : link.target;
+          const classification = classifyEdge(id2glyph[sId], id2glyph[tId]);
+          return EDGE_COLORS[classification] || EDGE_COLORS.unknown;
+        });
+    }
+
+    // Remove custom node objects (revert to default spheres)
+    graph3d.nodeThreeObject(null);
+    graph3d.nodeThreeObjectExtend(false);
+
+    // Stop auto-rotation
+    const controls = graph3d.controls();
+    if (controls) {
+      controls.autoRotate = false;
+    }
+
+    // Cancel brain animation
+    if (window._brainAnimId) {
+      cancelAnimationFrame(window._brainAnimId);
+      window._brainAnimId = null;
+    }
   }
 }
 
