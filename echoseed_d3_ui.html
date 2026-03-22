@@ -1937,34 +1937,41 @@ function updateGraphData() {
   }
 
   // Vertebrae constants (must match setView)
-  const VRT_RINGS = 8;           // concentric rings per disc
-  const VRT_RING_SPACING = 18;   // radial gap between rings
-  const VRT_GENS_PER_DISC = VRT_RINGS; // 1 gen = 1 ring, disc fills then stacks
-  const VRT_DISC_GAP = 120;      // vertical gap between disc centers
+  const VRT_RINGS = 8;               // concentric rings per disc
+  const VRT_RING_SPACING = 18;       // radial gap between rings
+  const VRT_NODES_PER_RING = 12;     // nodes to fill before next ring opens
+  const VRT_NODES_PER_DISC = VRT_RINGS * VRT_NODES_PER_RING;  // 96 nodes per disc
+  const VRT_DISC_GAP = 120;          // vertical gap between disc centers
+
+  // Sort by birth order so disc/ring assignment is stable and fills outward
+  const sorted = [...recentGlyphs].sort((a, b) =>
+    (a.generationBorn || 0) - (b.generationBorn || 0) ||
+    (parseInt(a.id.replace(/\D/g,''),10)||0) - (parseInt(b.id.replace(/\D/g,''),10)||0)
+  );
+
+  // Assign each glyph a sequential index → disc, ring, slot
+  sorted.forEach((g, i) => {
+    const disc = Math.floor(i / VRT_NODES_PER_DISC);
+    const indexInDisc = i % VRT_NODES_PER_DISC;
+    const ring = Math.floor(indexInDisc / VRT_NODES_PER_RING);
+    const slot = indexInDisc % VRT_NODES_PER_RING;
+    const r = (ring + 1) * VRT_RING_SPACING;
+    const angle = slot * (2 * Math.PI / VRT_NODES_PER_RING) + ring * 0.3; // offset per ring
+
+    g._ringR = r;
+    g._ringAngle = angle;
+    g._discY = disc * VRT_DISC_GAP;
+  });
 
   const nodes = recentGlyphs.map(g => {
     const existing = existingById[g.id];
     const node = { id: g.id };
 
-    // Which disc and which ring within that disc
-    const gen = g.generationBorn || 0;
-    const disc = Math.floor(gen / VRT_GENS_PER_DISC);
-    const genInDisc = gen % VRT_GENS_PER_DISC;  // 0=center, 7=outer
-    const ring = genInDisc;  // grow outward: gen 0→ring 0 (inner), gen 7→ring 7 (outer)
-    const r = (ring + 1) * VRT_RING_SPACING;
-    const idx = parseInt(g.id.replace(/\D/g, ''), 10) || 0;
-    const angle = idx * 2.39996;  // golden angle for even spread
-
-    // Cache targets on glyph for forces
-    g._ringR = r;
-    g._ringAngle = angle;
-    g._discY = disc * VRT_DISC_GAP;
-
     if (existing) {
       node.x = existing.x; node.y = existing.y; node.z = existing.z;
     } else {
-      node.x = Math.cos(angle) * r;
-      node.z = Math.sin(angle) * r;
+      node.x = Math.cos(g._ringAngle) * g._ringR;
+      node.z = Math.sin(g._ringAngle) * g._ringR;
       node.y = g._discY;
     }
     return node;
