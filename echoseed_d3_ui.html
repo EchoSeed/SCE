@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EchoSeed - Cognitive Architecture</title>
+<title>EchoSeed v4.3 - The Pantheon</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
@@ -336,7 +336,7 @@
 
 <!-- ═══════════════ HEADER ═══════════════ -->
 <div id="header">
-  <h1>EchoSeed <span>v4.2</span> — Emergent Consciousness Architecture</h1>
+  <h1>EchoSeed <span>v4.3</span> — The Pantheon</h1>
   <div class="controls">
     <button id="btn-start" onclick="startEngine()">Start</button>
     <button id="btn-stop" onclick="stopEngine()">Stop</button>
@@ -347,8 +347,8 @@
     </div>
     <div class="slider-group">
       <label>Max Nodes</label>
-      <input type="range" id="max-nodes-slider" min="100" max="10000" value="500" step="50">
-      <span id="max-nodes-label">500</span>
+      <input type="range" id="max-nodes-slider" min="100" max="20000" value="2000" step="100">
+      <span id="max-nodes-label">2000</span>
     </div>
     <button id="btn-save" onclick="saveLogsToFile()">Export JSON</button>
     <button id="btn-load" onclick="document.getElementById('import-file').click()">Import JSON</button>
@@ -397,6 +397,7 @@
         <div class="stat-item"><span class="label">Season Progress</span><span class="value" id="stat-season-prog">0/100</span></div>
         <div class="stat-item"><span class="label">Higgs Field</span><span class="value" id="stat-higgs" style="font-weight:bold;">0.0000</span></div>
         <div class="stat-item"><span class="label">Higgs State</span><span class="value" id="stat-higgs-state">CRITICAL</span></div>
+        <div class="stat-item"><span class="label">Coherence r</span><span class="value cyan" id="stat-coherence">0.00</span></div>
         <div class="stat-item"><span class="label">Seed</span><span class="value" id="stat-seed" style="color:#8b949e;font-size:10px;">none</span></div>
       </div>
       <div class="season-bar">
@@ -435,6 +436,16 @@
     <div class="sidebar-section">
       <h3>Entropy Over Time</h3>
       <div id="entropy-chart"></div>
+    </div>
+
+    <!-- SAT Encoder -->
+    <div class="sidebar-section">
+      <h3>SAT &#x2192; Glyph Encoder</h3>
+      <textarea id="sat-input" rows="3" spellcheck="false"
+        style="width:100%;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:6px;font-family:monospace;font-size:11px;resize:vertical;"
+        placeholder="DIMACS CNF or shorthand&#10;e.g. (x1 | ~x2 | x3) &amp; (~x1 | x4)&#10;or: 1 -2 3 0 / -1 4 0"></textarea>
+      <button onclick="encodeSAT()" style="margin-top:4px;width:100%;padding:4px 0;font-size:11px;background:#238636;border:1px solid #2ea043;border-radius:4px;color:#fff;cursor:pointer;">Encode &amp; Inject</button>
+      <div id="sat-status" style="font-size:10px;color:#8b949e;margin-top:3px;"></div>
     </div>
 
     <!-- Tabs: Inspector / Log / Analysis -->
@@ -486,10 +497,10 @@
 const MAX_RAM_GLYPHS   = 20000;
 const LOW_ENTROPY      = 100;
 const LOW_KEEP_PROB    = 0.025;
-const PRUNE_AFTER      = 10;     // prune stagnant nodes after 10 gens
+const PRUNE_AFTER      = 50;     // prune stagnant nodes after 50 gens (softened)
 const ATTRACTOR_THRESHOLD = 5;
 const DORMANCY_THRESHOLD  = 200;  // was 500 — faster dormancy transition
-const ISOLATE_PRUNE_AGE  = 50;   // prune connectionless nodes after 50 gens
+const ISOLATE_PRUNE_AGE  = 200;  // prune connectionless nodes after 200 gens (softened)
 const REACTIVATION_PROBABILITY = 0.1;
 const SEASON_DURATION  = 100;
 const EMBED_DIM        = 32;   // simplified embedding dimension
@@ -833,7 +844,12 @@ function fitness(g) {
   else if (currentSeason === SeasonalPhase.RENAISSANCE && g.tags.includes('singularity')) seasonalBonus = 100;
   // Higgs field modulation — expanding nodes get fitness boost, collapsing get penalty
   const higgsBonus = (g.higgs || 0) * 30;
-  return 200 * sem - g.entropy + 50 * influence + seasonalBonus + higgsBonus;
+  // SAT clause satisfaction bonus — strong evolutionary pressure
+  let satBonus = 0;
+  if (g.tags.includes('sat_clause')) {
+    satBonus = isClauseSatisfied(g) ? 150 : -200;
+  }
+  return 200 * sem - g.entropy + 50 * influence + seasonalBonus + higgsBonus + satBonus;
 }
 
 // ===== SIGNATURE & NOVELTY CHECK =====
@@ -929,7 +945,9 @@ function createGlyph() {
     higgs: HIGGS(idx),
     ancestry: [],
     generationBorn: generationCount,
-    resonance_src: null
+    resonance_src: null,
+    theta: Math.random() * 2 * Math.PI,
+    omega: (Math.random() - 0.5) * 0.4
   };
   g.entropy = calcEntropy(g);
   g.vec = embed(g.tags);
@@ -1057,7 +1075,9 @@ function collide(a, b) {
     higgs: HIGGS(idx),
     ancestry: [a.id, b.id],
     generationBorn: generationCount,
-    resonance_src: null
+    resonance_src: null,
+    theta: Math.random() * 2 * Math.PI,
+    omega: (Math.random() - 0.5) * 0.4
   };
   child.entropy = calcEntropy(child);
 
@@ -1173,6 +1193,8 @@ function createReflexGlyph(parent, reflexType) {
     ancestry: [parent.id],
     generationBorn: generationCount,
     resonance_src: null,
+    theta: Math.random() * 2 * Math.PI,
+    omega: (Math.random() - 0.5) * 0.4,
     reflexProfile: {
       type: reflexType,
       intensity: Math.random() * 0.5 + 0.5,
@@ -1461,6 +1483,240 @@ function renderLog() {
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
 
+// ===== KURAMOTO COUPLING =====
+const KURAMOTO_BASE_K = 0.3;  // base coupling strength
+let kuramotoOrderData = [];    // {gen, r} for chart overlay
+
+function kuramotoStep() {
+  if (glyphLog.length < 2) return;
+
+  // K modulated by season and global Higgs mean
+  const seasonK = {
+    [SeasonalPhase.EXPLORATION]:   1.0,
+    [SeasonalPhase.CONSOLIDATION]: 1.8,
+    [SeasonalPhase.DORMANCY]:      0.4,
+    [SeasonalPhase.RENAISSANCE]:   1.4
+  };
+  const recent = glyphLog.slice(-200);
+  const avgHiggs = recent.reduce((s, g) => s + (g.higgs || 0), 0) / recent.length;
+  // Higgs > 0 (expanding) strengthens coupling; < 0 weakens it
+  const K = KURAMOTO_BASE_K * (seasonK[currentSeason] || 1.0) * (1 + avgHiggs);
+
+  // Compute phase deltas (θ̇ᵢ = ωᵢ + K/dᵢ Σⱼ sin(θⱼ − θᵢ))
+  const deltas = new Map();
+  for (const g of glyphLog) {
+    if (g.theta == null) { g.theta = Math.random() * 2 * Math.PI; g.omega = (Math.random() - 0.5) * 0.4; }
+    const neighbors = adjacency.get(g.id);
+    let coupling = 0;
+    const di = neighbors ? neighbors.size : 0;
+    if (di > 0) {
+      for (const nid of neighbors) {
+        const nb = id2glyph[nid];
+        if (nb && nb.theta != null) coupling += Math.sin(nb.theta - g.theta);
+      }
+      coupling = (K / di) * coupling;
+    }
+    deltas.set(g.id, g.omega + coupling);
+  }
+
+  // Apply updates
+  for (const g of glyphLog) {
+    const d = deltas.get(g.id);
+    if (d != null) g.theta = (g.theta + d) % (2 * Math.PI);
+  }
+}
+
+// Kuramoto order parameter: r = |1/N Σ e^(iθ)|
+function kuramotoOrderParam() {
+  if (glyphLog.length === 0) return 0;
+  let sumCos = 0, sumSin = 0;
+  for (const g of glyphLog) {
+    if (g.theta == null) continue;
+    sumCos += Math.cos(g.theta);
+    sumSin += Math.sin(g.theta);
+  }
+  const N = glyphLog.length;
+  return Math.sqrt(sumCos * sumCos + sumSin * sumSin) / N;
+}
+
+// ===== SAT TRUTH & SATISFACTION =====
+
+function getVariableTruth(varName) {
+  const varGlyph = glyphLog.find(g => g.tags.includes(varName) && g.tags.includes('sat_var'));
+  if (!varGlyph) return false;
+  // Phase-based: θ near 0 = true, near π = false
+  if (varGlyph.theta != null) return Math.cos(varGlyph.theta) > 0;
+  // Fallback: entropy-based (lower entropy = more "settled" = true)
+  return varGlyph.entropy < populationAvgEntropy;
+}
+
+function isClauseSatisfied(clause) {
+  const neighbors = adjacency.get(clause.id);
+  if (!neighbors) return false;
+  for (const nid of neighbors) {
+    const nb = id2glyph[nid];
+    if (!nb || !nb.tags.includes('sat_var')) continue;
+    const varName = nb.tags.find(t => t !== 'sat_var');
+    if (!varName) continue;
+    const isNegated = clause.tags.includes('NOT_' + varName);
+    const varState = getVariableTruth(varName);
+    if ((!isNegated && varState) || (isNegated && !varState)) return true;
+  }
+  return false;
+}
+
+function detectSATSolution() {
+  const r = kuramotoOrderParam();
+  const allClauses = glyphLog.filter(g => g.tags.includes('sat_clause'));
+  if (allClauses.length === 0) return false;
+
+  let allSatisfied = true;
+  for (const clause of allClauses) {
+    if (!isClauseSatisfied(clause)) { allSatisfied = false; break; }
+  }
+
+  if (r > 0.92 && allSatisfied) {
+    addLog(`SAT SOLUTION FOUND at gen ${generationCount} (r=${r.toFixed(3)})`, 'solution');
+    stopEngine();
+    return true;
+  }
+  return false;
+}
+
+// ===== SAT-TO-GLYPH ENCODER =====
+
+function parseSAT(input) {
+  const text = input.trim();
+  if (!text) return null;
+
+  const clauses = [];
+  const allVars = new Set();
+
+  // Try human-readable: (x1 | ~x2 | x3) & (~x1 | x4)
+  const parenMatch = text.match(/\([^)]+\)/g);
+  if (parenMatch) {
+    for (const group of parenMatch) {
+      const inner = group.replace(/[()]/g, '');
+      const lits = inner.split(/\s*[\|,]\s*/).map(s => s.trim()).filter(Boolean);
+      const clause = lits.map(lit => {
+        const neg = lit.startsWith('~') || lit.startsWith('-') || lit.startsWith('!');
+        const name = lit.replace(/^[~!-]+/, '').trim();
+        allVars.add(name);
+        return { var: name, neg };
+      });
+      if (clause.length) clauses.push(clause);
+    }
+  } else {
+    // DIMACS-style: "1 -2 3 0 / -1 4 0" or newline-separated
+    const lines = text.split(/[\/\n]+/);
+    for (const line of lines) {
+      const tokens = line.trim().split(/\s+/).filter(t => t !== '0' && t !== 'c' && t !== 'p' && t !== 'cnf' && t !== '');
+      if (!tokens.length) continue;
+      // Skip DIMACS header lines
+      if (tokens[0] === 'p' || tokens[0] === 'c') continue;
+      const clause = tokens.map(t => {
+        const n = parseInt(t, 10);
+        if (isNaN(n)) {
+          // treat as variable name
+          const neg = t.startsWith('-') || t.startsWith('~');
+          const name = t.replace(/^[-~]/, '');
+          allVars.add(name);
+          return { var: name, neg };
+        }
+        const name = 'x' + Math.abs(n);
+        allVars.add(name);
+        return { var: name, neg: n < 0 };
+      });
+      if (clause.length) clauses.push(clause);
+    }
+  }
+
+  return clauses.length ? { clauses, vars: [...allVars] } : null;
+}
+
+function encodeSAT() {
+  const input = document.getElementById('sat-input').value;
+  const parsed = parseSAT(input);
+  const statusEl = document.getElementById('sat-status');
+
+  if (!parsed) {
+    statusEl.textContent = 'Could not parse. Use (x1 | ~x2) & (x3) or DIMACS format.';
+    statusEl.style.color = '#f85149';
+    return;
+  }
+
+  const { clauses, vars } = parsed;
+
+  // 1) Create one glyph per variable (positive literal = tag, negated = "NOT_tag")
+  const varGlyphs = {};
+  for (const v of vars) {
+    const idx = glyphId + 1;
+    const id = genId();
+    const g = {
+      id, tags: [v, 'sat_var'],
+      entropy: 0, higgs: HIGGS(idx),
+      ancestry: [], generationBorn: generationCount,
+      resonance_src: null,
+      theta: Math.random() * 2 * Math.PI,
+      omega: (Math.random() - 0.5) * 0.4
+    };
+    g.entropy = calcEntropy(g);
+    maybeStore(g);
+    varGlyphs[v] = g;
+  }
+
+  // 2) Create one glyph per clause, tagged with its literals
+  const clauseGlyphs = [];
+  clauses.forEach((clause, ci) => {
+    const litTags = clause.map(l => l.neg ? ('NOT_' + l.var) : l.var);
+    const idx = glyphId + 1;
+    const id = genId();
+    const parentIds = clause.map(l => varGlyphs[l.var].id);
+    const g = {
+      id, tags: [...litTags, 'sat_clause', 'C' + ci],
+      entropy: 0, higgs: HIGGS(idx),
+      ancestry: parentIds, generationBorn: generationCount,
+      resonance_src: null,
+      theta: Math.random() * 2 * Math.PI,
+      omega: (Math.random() - 0.5) * 0.4
+    };
+    g.entropy = calcEntropy(g);
+    maybeStore(g);
+    clauseGlyphs.push(g);
+
+    // Edge from each variable glyph to its clause glyph
+    for (const l of clause) {
+      addEdge(varGlyphs[l.var].id, g.id, l.neg ? 0.5 : 1.5);
+    }
+  });
+
+  // 3) Connect clause glyphs that share variables (resolution edges)
+  for (let i = 0; i < clauseGlyphs.length; i++) {
+    for (let j = i + 1; j < clauseGlyphs.length; j++) {
+      const shared = clauses[i].filter(l1 =>
+        clauses[j].some(l2 => l1.var === l2.var)
+      );
+      if (shared.length > 0) {
+        addEdge(clauseGlyphs[i].id, clauseGlyphs[j].id, shared.length);
+      }
+    }
+  }
+
+  const totalGlyphs = vars.length + clauseGlyphs.length;
+  const totalEdges = clauses.reduce((s, c) => s + c.length, 0)
+    + clauseGlyphs.reduce((s, _, i) => {
+      let e = 0;
+      for (let j = i + 1; j < clauseGlyphs.length; j++) {
+        if (clauses[i].some(l1 => clauses[j].some(l2 => l1.var === l2.var))) e++;
+      }
+      return s + e;
+    }, 0);
+
+  statusEl.textContent = `Injected ${vars.length} vars + ${clauseGlyphs.length} clauses (${totalEdges} edges)`;
+  statusEl.style.color = '#3fb950';
+  addLog(`SAT encoded: ${vars.length} variables, ${clauses.length} clauses → ${totalGlyphs} glyphs, ${totalEdges} edges`);
+}
+
 // ===== GENERATION LOOP =====
 function generationStep() {
   generationCount++;
@@ -1485,11 +1741,14 @@ function generationStep() {
   // Batch collide (reduced for browser perf)
   batchCollide(10);
 
+  // Kuramoto phase coupling (every 3 gens for perf)
+  if (generationCount % 3 === 0) kuramotoStep();
+
   // Reflex test (every 10 gens)
   if (generationCount % 10 === 0) reflexTest();
 
-  // Prune (every 20 gens — aggressive to match generation rate)
-  if (generationCount % 20 === 0) pruneStagnant();
+  // Prune (every 50 gens — softened to allow more growth)
+  if (generationCount % 50 === 0) pruneStagnant();
 
   // Rewire (every 25 gens)
   if (generationCount % 25 === 0) rewireShortcuts();
@@ -1499,6 +1758,11 @@ function generationStep() {
 
   // Deep analysis (every 500 gens)
   if (generationCount % 500 === 0 && glyphLog.length >= 100) performDeepAnalysis();
+
+  // SAT solution detection (every 10 gens, only if SAT glyphs exist)
+  if (generationCount % 10 === 0 && glyphLog.some(g => g.tags.includes('sat_clause'))) {
+    detectSATSolution();
+  }
 
   // Enforce max glyphs
   if (glyphLog.length > MAX_RAM_GLYPHS) {
@@ -1551,6 +1815,11 @@ function launchEngine() {
   document.getElementById('btn-stop').classList.remove('stop');
   exitSnapshot(); // exit snapshot mode on resume
   lastStepTime = performance.now();
+  // Resume graph data updates and unfreeze the D3 force sim
+  if (!graphUpdateTimer) scheduleGraphUpdate();
+  if (graph3d) {
+    try { graph3d.d3AlphaTarget(0.08); setTimeout(() => { try { graph3d.d3AlphaTarget(0); } catch(_){} }, 300); } catch(_){}
+  }
   requestAnimationFrame(engineLoop);
 }
 
@@ -1559,6 +1828,17 @@ function stopEngine() {
   document.getElementById('btn-start').classList.remove('active');
   document.getElementById('btn-stop').classList.add('stop');
   if (animFrameId) cancelAnimationFrame(animFrameId);
+  // Stop graph data interval so we don't keep poking the sim
+  if (graphUpdateTimer) { clearInterval(graphUpdateTimer); graphUpdateTimer = null; }
+  // Freeze the D3 force simulation immediately — kills all residual bounce
+  if (graph3d) {
+    try { graph3d.d3AlphaTarget(0); } catch(_){}
+    // Zero out all node velocities
+    const gd = graph3d.graphData();
+    if (gd && gd.nodes) {
+      for (const n of gd.nodes) { n.vx = 0; n.vy = 0; n.vz = 0; }
+    }
+  }
 }
 
 // ===== SNAPSHOT MODE =====
@@ -1661,6 +1941,12 @@ function updateStats() {
   hsEl.textContent = higgsLabel(nextHiggs);
   hsEl.style.color = hc;
 
+  // Kuramoto coherence display
+  const coherenceR = kuramotoOrderParam();
+  const cohEl = document.getElementById('stat-coherence');
+  cohEl.textContent = coherenceR.toFixed(4);
+  cohEl.style.color = coherenceR > 0.9 ? '#39d353' : coherenceR > 0.6 ? '#d29922' : '#8b949e';
+
   // Update snapshot slider max
   if (glyphLog.length > 0) {
     const slider = document.getElementById('snapshot-slider');
@@ -1682,12 +1968,16 @@ const ENTROPY_MAX_POINTS = 200;
 function updateEntropyChart() {
   if (glyphLog.length === 0) return;
 
-  // Sample entropy data
+  // Sample entropy + Kuramoto order param data
   if (generationCount % 5 === 0) {
     const recent = glyphLog.slice(-50);
     const avg = recent.reduce((s, g) => s + g.entropy, 0) / recent.length;
     entropyData.push({ gen: generationCount, entropy: avg });
     if (entropyData.length > ENTROPY_MAX_POINTS) entropyData.shift();
+
+    const r = kuramotoOrderParam();
+    kuramotoOrderData.push({ gen: generationCount, r: r });
+    if (kuramotoOrderData.length > ENTROPY_MAX_POINTS) kuramotoOrderData.shift();
   }
 
   if (entropyData.length < 2) return;
@@ -1695,7 +1985,7 @@ function updateEntropyChart() {
   const container = document.getElementById('entropy-chart');
   const W = container.clientWidth;
   const H = container.clientHeight || 100;
-  const margin = { top: 5, right: 5, bottom: 18, left: 30 };
+  const margin = { top: 5, right: 30, bottom: 18, left: 30 };
 
   d3.select('#entropy-chart svg').remove();
   const svg = d3.select('#entropy-chart').append('svg')
@@ -1708,7 +1998,12 @@ function updateEntropyChart() {
     .domain([0, d3.max(entropyData, d => d.entropy) * 1.1])
     .range([H - margin.bottom, margin.top]);
 
-  // Area
+  // Right y-axis scale for r ∈ [0, 1]
+  const yR = d3.scaleLinear()
+    .domain([0, 1])
+    .range([H - margin.bottom, margin.top]);
+
+  // Entropy area
   const area = d3.area()
     .x(d => x(d.gen))
     .y0(H - margin.bottom)
@@ -1720,7 +2015,7 @@ function updateEntropyChart() {
     .attr('fill', 'rgba(210,153,34,0.15)')
     .attr('d', area);
 
-  // Line
+  // Entropy line
   const line = d3.line()
     .x(d => x(d.gen))
     .y(d => y(d.entropy))
@@ -1733,7 +2028,34 @@ function updateEntropyChart() {
     .attr('stroke-width', 1.5)
     .attr('d', line);
 
-  // Axes
+  // Kuramoto r overlay (cyan)
+  if (kuramotoOrderData.length >= 2) {
+    const rArea = d3.area()
+      .x(d => x(d.gen))
+      .y0(H - margin.bottom)
+      .y1(d => yR(d.r))
+      .curve(d3.curveBasis);
+
+    svg.append('path')
+      .datum(kuramotoOrderData)
+      .attr('fill', 'rgba(56,180,253,0.08)')
+      .attr('d', rArea);
+
+    const rLine = d3.line()
+      .x(d => x(d.gen))
+      .y(d => yR(d.r))
+      .curve(d3.curveBasis);
+
+    svg.append('path')
+      .datum(kuramotoOrderData)
+      .attr('fill', 'none')
+      .attr('stroke', '#38b4fd')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '4,2')
+      .attr('d', rLine);
+  }
+
+  // Left axis (entropy)
   svg.append('g')
     .attr('transform', `translate(0,${H - margin.bottom})`)
     .call(d3.axisBottom(x).ticks(4).tickSize(3))
@@ -1745,6 +2067,13 @@ function updateEntropyChart() {
     .call(d3.axisLeft(y).ticks(3).tickSize(3))
     .attr('font-size', '8px')
     .attr('color', '#484f58');
+
+  // Right axis (r)
+  svg.append('g')
+    .attr('transform', `translate(${W - margin.right},0)`)
+    .call(d3.axisRight(yR).ticks(3).tickSize(3))
+    .attr('font-size', '8px')
+    .attr('color', '#38b4fd');
 }
 
 // ===== forceZ polyfill (d3-force only has forceX/Y, 3D needs Z) =====
@@ -1822,10 +2151,10 @@ function edgeThickness(sourceGlyph, targetGlyph) {
 }
 
 function glyphRadius(g) {
-  if (!g) return 4;
-  const base = 3;
-  if (conceptualAttractors[g.id]) return base + 5;
-  return base + Math.min(5, g.entropy / 100);
+  if (!g) return 6;
+  const base = 6;
+  if (conceptualAttractors[g.id]) return base + 6;
+  return base + Math.min(6, g.entropy / 80);
 }
 
 // ── Init ──
@@ -1863,9 +2192,9 @@ function initGraph() {
       const tId = typeof link.target === 'object' ? link.target.id : link.target;
       return edgeThickness(id2glyph[sId], id2glyph[tId]);
     })
-    // Alpha config
-    .d3AlphaDecay(0.02)
-    .d3VelocityDecay(0.3)
+    // Alpha config — fast cooldown + moderate drag for smooth settling
+    .d3AlphaDecay(0.12)
+    .d3VelocityDecay(0.55)
     // Interactions
     .onNodeHover(node => {
       const el = document.getElementById('3d-graph');
@@ -1881,9 +2210,10 @@ function initGraph() {
     })
     .graphData({ nodes: [], links: [] });
 
-  // Configure the INTERNAL 3D forces
-  graph3d.d3Force('charge').strength(-100).distanceMax(600);
-  graph3d.d3Force('link').id(d => d.id).distance(90).strength(0.06);
+  // Configure the INTERNAL 3D forces — distanceMax kept under disc gap
+  // so charge repulsion never crosses between discs
+  graph3d.d3Force('charge').strength(-40).distanceMax(50);
+  graph3d.d3Force('link').id(d => d.id).distance(30).strength(0.04);
 
   scheduleGraphUpdate();
 
@@ -1930,21 +2260,70 @@ function updateGraphData() {
     }
   }
 
-  // Build nodes — preserve existing positions
+  // Build nodes — preserve existing positions, seed new ones for vertebrae layout
   const existingById = {};
   for (const n of currentGraphData.nodes) {
-    existingById[n.id] = { x: n.x, y: n.y, z: n.z };
+    existingById[n.id] = { x: n.x, y: n.y, z: n.z, vx: n.vx, vy: n.vy, vz: n.vz };
   }
+
+  // Vertebrae constants (must match setView)
+  const VRT_RINGS = 8;               // concentric rings per disc
+  const VRT_RING_SPACING = 24;       // radial gap between rings (wider for larger nodes)
+  const VRT_NODES_PER_DISC = 1000;   // nodes before next disc
+  const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // 125
+  const VRT_DISC_GAP = 120;          // vertical gap between disc centers
+
+  // Sort by birth order so disc/ring assignment is stable and fills outward
+  const sorted = [...recentGlyphs].sort((a, b) =>
+    (a.generationBorn || 0) - (b.generationBorn || 0) ||
+    (parseInt(a.id.replace(/\D/g,''),10)||0) - (parseInt(b.id.replace(/\D/g,''),10)||0)
+  );
+
+  // Assign each glyph a sequential index → disc, ring, slot
+  sorted.forEach((g, i) => {
+    const disc = Math.floor(i / VRT_NODES_PER_DISC);
+    const indexInDisc = i % VRT_NODES_PER_DISC;
+    const ring = Math.floor(indexInDisc / VRT_NODES_PER_RING);
+    const slot = indexInDisc % VRT_NODES_PER_RING;
+    const r = (ring + 1) * VRT_RING_SPACING;
+    const angle = slot * (2 * Math.PI / VRT_NODES_PER_RING) + ring * 0.3;
+
+    g._ringR = r;
+    g._ringAngle = angle;
+    g._discY = disc * VRT_DISC_GAP;
+  });
 
   const nodes = recentGlyphs.map(g => {
     const existing = existingById[g.id];
     const node = { id: g.id };
-    if (existing) { node.x = existing.x; node.y = existing.y; node.z = existing.z; }
+
+    // In vertebrae mode, ALWAYS pin every node to its target position.
+    // graphData() internally reheats the sim (alpha→1) and the position
+    // spring is underdamped (strength 0.95, decay 0.55), so free nodes
+    // oscillate.  Permanent fx/fy/fz bypasses forces entirely.
+    const tx = Math.cos(g._ringAngle) * g._ringR;
+    const tz = Math.sin(g._ringAngle) * g._ringR;
+    const ty = g._discY || 0;
+
+    if (existing) {
+      node.x = existing.x; node.y = existing.y; node.z = existing.z;
+      node.vx = 0; node.vy = 0; node.vz = 0;
+    } else {
+      node.x = tx; node.y = ty; node.z = tz;
+    }
+    // Pin to target — sim cannot move this node
+    node.fx = tx; node.fy = ty; node.fz = tz;
     return node;
   });
 
   // Performance cap
   const cappedLinks = links.length > 1500 ? links.slice(-1500) : links;
+
+  const prevCount = currentGraphData.nodes.length;
+  const prevLinkCount = currentGraphData.links ? currentGraphData.links.length : 0;
+
+  // Skip graphData push entirely if nothing changed — avoids sim disturbance
+  if (nodes.length === prevCount && cappedLinks.length === prevLinkCount) return;
 
   currentGraphData = { nodes, links: cappedLinks };
   graph3d.graphData(currentGraphData);
@@ -2053,31 +2432,35 @@ function setView(mode) {
 
   if (!graph3d) return;
 
-  // Concentric: rings by generation, low entropy center / high entropy outer
-  graph3d.d3Force('charge').strength(-100).distanceMax(600);
-  graph3d.d3Force('link').distance(90).strength(0.06);
+  // Vertebrae spine: position forces pin nodes firmly to targets.
+  // Charge distanceMax must be well under VRT_DISC_GAP (120) so
+  // nodes on different discs never repel each other across the gap.
+  graph3d.d3Force('charge').strength(-8).distanceMax(50);
+  graph3d.d3Force('link').distance(18).strength(0.01);
+  graph3d.d3Force('radial', null);
 
-  const RING_GENS = 50;
-  const GEN_SPACING = 100;
-  const ENTROPY_SCALE = 0.6;
-
-  // Radial force — generation sets the ring, entropy pushes outward
-  graph3d.d3Force('radial', d3.forceRadial(d => {
+  // Pin nodes to ring positions on x/z plane — strong pull eliminates drift
+  graph3d.d3Force('posX', d3.forceX(d => {
     const g = id2glyph[d.id];
-    if (!g) return 120;
-    const gen = g.generationBorn || 0;
-    const bucket = Math.floor(gen / RING_GENS);
-    const entropyRadius = (g.entropy || 0) * ENTROPY_SCALE;
-    return (bucket + 1) * GEN_SPACING + entropyRadius;
-  }, 0, 0).strength(0.5));
+    if (!g || !g._ringR) return 0;
+    return Math.cos(g._ringAngle) * g._ringR;
+  }).strength(0.7));
 
-  // Spread on z-axis by generation so rings stack into a helix
   graph3d.d3Force('posZ', d3.forceZ(d => {
     const g = id2glyph[d.id];
-    return g ? ((g.generationBorn || 0) % 200) * 1.4 - 140 : 0;
-  }).strength(0.1));
+    if (!g || !g._ringR) return 0;
+    return Math.sin(g._ringAngle) * g._ringR;
+  }).strength(0.7));
 
-  graph3d.d3ReheatSimulation();
+  // Y-axis: pin to disc level — near-rigid vertical placement
+  graph3d.d3Force('posY', d3.forceY(d => {
+    const g = id2glyph[d.id];
+    if (!g) return 0;
+    return g._discY || 0;
+  }).strength(0.95));
+
+  // Gentle warmup instead of full reheat to avoid visual jerk
+  try { graph3d.d3AlphaTarget(0.15).d3AlphaTarget(0); } catch (_) {}
 }
 
 // ===== TAB SWITCHING =====
