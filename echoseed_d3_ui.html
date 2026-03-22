@@ -1132,8 +1132,13 @@ function batchCollide(maxPairs) {
   if (maxPairs === undefined) maxPairs = 30;
   const parents = selectParents(maxPairs);
   if (parents.length < 2) return;
-  // Limit pair count for performance
-  const limit = Math.min(parents.length, 8);
+
+  // Scale collision pairs with population — start slow, ramp up
+  // Early: 2 pairs → 1 collision.  At 500+ nodes: up to 4 pairs → 6 collisions.
+  const popSize = graphNodes.size;
+  const pairLimit = popSize < 50 ? 2 : (popSize < 200 ? 3 : Math.min(4, parents.length));
+  const limit = Math.min(pairLimit, parents.length);
+
   for (let i = 0; i < limit; i++) {
     for (let j = i + 1; j < limit; j++) {
       const a = id2glyph[parents[i]];
@@ -1775,8 +1780,8 @@ function generationStep() {
   // Kuramoto phase coupling (every 3 gens for perf)
   if (generationCount % 3 === 0) kuramotoStep();
 
-  // Reflex test (every 10 gens)
-  if (generationCount % 10 === 0) reflexTest();
+  // Reflex test — every 20 gens, only after population has established
+  if (generationCount % 20 === 0 && glyphLog.length >= 50) reflexTest();
 
   // Prune (every 50 gens — softened to allow more growth)
   // Prune less frequently — every 100 gens instead of 50
@@ -1926,8 +1931,8 @@ function engineLoop(timestamp) {
   const rate = parseInt(document.getElementById('rate-slider').value);
 
   if (timestamp - lastStepTime >= rate) {
-    // Run multiple steps per frame for faster rates
-    const steps = rate < 50 ? 5 : (rate < 100 ? 3 : 1);
+    // Run multiple steps per frame for faster rates (capped to prevent explosion)
+    const steps = rate < 50 ? 2 : 1;
     for (let i = 0; i < steps; i++) generationStep();
     lastStepTime = timestamp;
 
