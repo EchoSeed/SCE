@@ -2276,7 +2276,8 @@ function initGraph() {
     .nodeVal(node => {
       const g = id2glyph[node.id];
       const r = glyphRadius(g);
-      return r * r; // nodeVal is volume-like, so square the radius
+      const v = r * r; // nodeVal is volume-like, so square the radius
+      return node.id === selectedNodeId ? v * 4 : v;
     })
     .nodeColor(node => {
       if (node.id === selectedNodeId) return '#ffffff';
