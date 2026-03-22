@@ -1939,8 +1939,8 @@ function updateGraphData() {
   // Vertebrae constants (must match setView)
   const VRT_RINGS = 8;               // concentric rings per disc
   const VRT_RING_SPACING = 18;       // radial gap between rings
-  const VRT_NODES_PER_RING = 12;     // nodes to fill before next ring opens
-  const VRT_NODES_PER_DISC = VRT_RINGS * VRT_NODES_PER_RING;  // 96 nodes per disc
+  const VRT_NODES_PER_DISC = 1000;   // nodes before next disc
+  const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // 125
   const VRT_DISC_GAP = 120;          // vertical gap between disc centers
 
   // Sort by birth order so disc/ring assignment is stable and fills outward
@@ -1956,7 +1956,7 @@ function updateGraphData() {
     const ring = Math.floor(indexInDisc / VRT_NODES_PER_RING);
     const slot = indexInDisc % VRT_NODES_PER_RING;
     const r = (ring + 1) * VRT_RING_SPACING;
-    const angle = slot * (2 * Math.PI / VRT_NODES_PER_RING) + ring * 0.3; // offset per ring
+    const angle = slot * (2 * Math.PI / VRT_NODES_PER_RING) + ring * 0.3;
 
     g._ringR = r;
     g._ringAngle = angle;
