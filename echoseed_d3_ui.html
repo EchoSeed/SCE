@@ -1176,9 +1176,10 @@ function determineReflexType(g, contextGlyphs) {
   const semIso = s.length > 0 ? totalDist / s.length : 0.5;
 
   if (entropyRatio < 0.5 && semIso < 0.3) return ReflexType.DEFENSIVE;
-  if (semIso > 0.6) return ReflexType.EXPLORATORY;
   if (g.tags.length > 3 && entropyRatio > 1.2) return ReflexType.COLLABORATIVE;
   if (conceptualAttractors[g.id]) return ReflexType.CONSOLIDATIVE;
+  // Exploratory requires genuine semantic isolation — mean distance > 0.8
+  if (semIso > 0.8) return ReflexType.EXPLORATORY;
   return ReflexType.METAMORPHIC;
 }
 
@@ -1235,7 +1236,7 @@ function reflexTest() {
 
   for (const g of limited) {
     const reflexType = determineReflexType(g, context);
-    const count = reflexType === ReflexType.EXPLORATORY ? 3 : 2;
+    const count = 2;
 
     for (let i = 0; i < count; i++) {
       const ng = createReflexGlyph(g, reflexType);
