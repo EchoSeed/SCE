@@ -173,19 +173,37 @@
   #entropy-chart svg { width: 100%; height: 100%; }
 
   /* ── Log area ── */
+  #log-filter-bar {
+    display: flex; gap: 4px; padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap; flex-shrink: 0;
+  }
+  #log-filter-bar button {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--dim); cursor: pointer; transition: all .15s;
+  }
+  #log-filter-bar button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  #log-filter-bar button:hover { border-color: var(--fg); color: var(--fg); }
   #log-container {
     flex: 1;
-    overflow-y: auto;
+    min-height: 0;
+    overflow-y: scroll;
     padding: 8px 12px;
     font-size: 11px;
     font-family: 'SF Mono', 'Consolas', monospace;
     line-height: 1.5;
   }
   #log-container::-webkit-scrollbar { width: 6px; }
+  #log-container::-webkit-scrollbar-track { background: var(--bg); }
   #log-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-  .log-entry { padding: 1px 0; }
-  .log-entry .gen { color: var(--accent); }
-  .log-entry .id { color: var(--yellow); }
+  #log-container::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+  .log-entry { padding: 2px 0; border-radius: 3px; transition: background .1s; }
+  .log-entry:hover { background: rgba(88,166,255,0.06); }
+  .log-entry .gen { color: var(--accent); cursor: pointer; }
+  .log-entry .gen:hover { text-decoration: underline; }
+  .log-entry .id { color: var(--yellow); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+  .log-entry .id:hover { color: #fff; text-decoration: underline solid; }
   .log-entry .tag { color: var(--green); }
   .log-entry .season-log { color: var(--purple); font-weight: bold; }
   .log-entry .reflex-log { color: var(--cyan); }
@@ -291,8 +309,8 @@
     border-bottom-color: var(--accent);
     background: none;
   }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
+  .tab-content { display: none; flex-direction: column; overflow: hidden; }
+  .tab-content.active { display: flex; flex: 1; min-height: 0; }
 
   /* ── Glyph inspector ── */
   #inspector {
@@ -342,7 +360,7 @@
     <button id="btn-stop" onclick="stopEngine()">Stop</button>
     <div class="slider-group">
       <label>Rate</label>
-      <input type="range" id="rate-slider" min="20" max="2000" value="200" step="10">
+      <input type="range" id="rate-slider" min="100" max="2000" value="400" step="10">
       <span id="rate-label">200ms</span>
     </div>
     <div class="slider-group">
@@ -456,6 +474,14 @@
     </div>
 
     <div id="tab-log" class="tab-content active">
+      <div id="log-filter-bar">
+        <button class="active" onclick="toggleLogFilter(this,'all')">All</button>
+        <button onclick="toggleLogFilter(this,'spawn')">Spawn</button>
+        <button onclick="toggleLogFilter(this,'reflex')">Reflex</button>
+        <button onclick="toggleLogFilter(this,'season')">Season</button>
+        <button onclick="toggleLogFilter(this,'attractor')">Attractor</button>
+        <button onclick="toggleLogFilter(this,'prune')">Prune</button>
+      </div>
       <div id="log-container"></div>
     </div>
     <div id="tab-inspector" class="tab-content">
@@ -494,13 +520,13 @@
 // ╚══════════════════════════════════════════════════════════════╝
 
 // ===== CONSTANTS =====
-const MAX_RAM_GLYPHS   = 20000;
+const MAX_RAM_GLYPHS   = 30000;
 const LOW_ENTROPY      = 100;
 const LOW_KEEP_PROB    = 0.025;
-const PRUNE_AFTER      = 50;     // prune stagnant nodes after 50 gens (softened)
+const PRUNE_AFTER      = 120;    // prune stagnant nodes after 120 gens (hardened)
 const ATTRACTOR_THRESHOLD = 5;
-const DORMANCY_THRESHOLD  = 200;  // was 500 — faster dormancy transition
-const ISOLATE_PRUNE_AGE  = 200;  // prune connectionless nodes after 200 gens (softened)
+const DORMANCY_THRESHOLD  = 300;  // longer dormancy window before prune
+const ISOLATE_PRUNE_AGE  = 400;  // prune connectionless nodes after 400 gens (hardened)
 const REACTIVATION_PROBABILITY = 0.1;
 const SEASON_DURATION  = 100;
 const EMBED_DIM        = 32;   // simplified embedding dimension
@@ -511,9 +537,9 @@ const HIGGS = i => {
   const n = typeof i === 'string' ? parseInt(i.replace(/\D/g, ''), 10) || 0 : i;
   return Math.round(Math.sin(n / 5) * 10000) / 10000;
 };
-const HIGGS_COLORS = { EXPANDING: '#e3b341', EMERGENT: '#e3b341', CRITICAL: '#3fb950', CONTRACTING: '#388bfd', COLLAPSING: '#388bfd' };
+const HIGGS_COLORS = { EXPANDING: '#e3b341', EMERGENT: '#e3b341', CRITICAL: '#3fb950', CONTRACT: '#388bfd', COLLAPSING: '#388bfd' };
 function higgsLabel(h) {
-  return h > 0.7 ? 'EXPANDING' : h > 0.2 ? 'EMERGENT' : h > -0.2 ? 'CRITICAL' : h > -0.7 ? 'CONTRACTING' : 'COLLAPSING';
+  return h > 0.7 ? 'EXPANDING' : h > 0.2 ? 'EMERGENT' : h > -0.2 ? 'CRITICAL' : h > -0.7 ? 'CONTRACT' : 'COLLAPSING';
 }
 function higgsColor(h) {
   return h > 0.2 ? '#e3b341' : h > -0.2 ? '#3fb950' : '#388bfd';
@@ -563,6 +589,7 @@ let uniqueTags      = new Set();   // all individual tags ever seen
 let tagCombos       = new Map();   // sorted combo key -> { count, firstSeen (gen), glyphIds[] }
 
 let running          = false;
+let selectedNodeId   = null;
 let animFrameId      = null;
 let lastStepTime     = 0;
 let latticeSeed      = '';       // conceptual seed for root nodes
@@ -1132,8 +1159,13 @@ function batchCollide(maxPairs) {
   if (maxPairs === undefined) maxPairs = 30;
   const parents = selectParents(maxPairs);
   if (parents.length < 2) return;
-  // Limit pair count for performance
-  const limit = Math.min(parents.length, 8);
+
+  // Scale collision pairs with population — start slow, ramp up
+  // Early: 2 pairs → 1 collision.  At 500+ nodes: up to 4 pairs → 6 collisions.
+  const popSize = graphNodes.size;
+  const pairLimit = popSize < 50 ? 2 : (popSize < 200 ? 3 : Math.min(4, parents.length));
+  const limit = Math.min(pairLimit, parents.length);
+
   for (let i = 0; i < limit; i++) {
     for (let j = i + 1; j < limit; j++) {
       const a = id2glyph[parents[i]];
@@ -1158,12 +1190,23 @@ function findSemanticallyDistantGlyph(ref) {
 function determineReflexType(g, contextGlyphs) {
   const avgEntropy = contextGlyphs.reduce((s, c) => s + c.entropy, 0) / Math.max(1, contextGlyphs.length);
   const entropyRatio = g.entropy / Math.max(1, avgEntropy);
-  const semIso = semanticNovelty(g.vec);
+
+  // Use MEAN cosine distance for reflex classification.
+  // semanticNovelty() returns MAX over 100 samples, which is almost
+  // always > 0.8 in a diverse population — making EXPLORATORY dominate.
+  // Mean distance gives a balanced distribution across reflex types.
+  const s = sample(contextGlyphs, Math.min(50, contextGlyphs.length));
+  let totalDist = 0;
+  for (const c of s) {
+    if (c.vec) totalDist += cosineDistance(g.vec, c.vec);
+  }
+  const semIso = s.length > 0 ? totalDist / s.length : 0.5;
 
   if (entropyRatio < 0.5 && semIso < 0.3) return ReflexType.DEFENSIVE;
-  if (semIso > 0.8) return ReflexType.EXPLORATORY;
   if (g.tags.length > 3 && entropyRatio > 1.2) return ReflexType.COLLABORATIVE;
   if (conceptualAttractors[g.id]) return ReflexType.CONSOLIDATIVE;
+  // Exploratory requires genuine semantic isolation — mean distance > 0.8
+  if (semIso > 0.8) return ReflexType.EXPLORATORY;
   return ReflexType.METAMORPHIC;
 }
 
@@ -1208,13 +1251,19 @@ function createReflexGlyph(parent, reflexType) {
 
 function reflexTest() {
   const context = glyphLog.slice(-100);
-  const targets = glyphLog.filter(g => g.tags.includes('vacuum') && g.entropy < 150);
+  // Target low-entropy glyphs that aren't already reflex offspring.
+  // Use population average as the baseline — absolute thresholds can't
+  // keep up with the logarithmic generation pressure in calcEntropy.
+  const threshold = populationAvgEntropy * 0.6;
+  const targets = glyphLog.filter(g =>
+    g.entropy < threshold && !g.reflexProfile && !g.tags.includes('observer')
+  );
   // Limit to avoid performance issues
   const limited = targets.slice(-5);
 
   for (const g of limited) {
     const reflexType = determineReflexType(g, context);
-    const count = reflexType === ReflexType.EXPLORATORY ? 3 : 2;
+    const count = 2;
 
     for (let i = 0; i < count; i++) {
       const ng = createReflexGlyph(g, reflexType);
@@ -1235,8 +1284,23 @@ function pruneStagnant() {
   for (const [nid] of graphNodes) {
     stagnantCounter[nid] = (stagnantCounter[nid] || 0) + 1;
     if (stagnantCounter[nid] > PRUNE_AFTER) {
+      // Protect high-value nodes from pruning
+      const g = id2glyph[nid];
+      const neighbors = adjacency.get(nid);
+      const degree = neighbors ? neighbors.size : 0;
+      const isProtected = g && (
+        g.reflexProfile ||                     // reflex glyphs are rare/valuable
+        g.resonance_src != null ||             // resonance-linked
+        degree >= 5 ||                         // well-connected hub
+        conceptualAttractors[nid]              // attractor
+      );
+      if (isProtected) {
+        // Reset stagnancy — protected nodes get another full window
+        stagnantCounter[nid] = 0;
+        continue;
+      }
+
       if (currentSeason === SeasonalPhase.DORMANCY &&
-          !conceptualAttractors[nid] &&
           stagnantCounter[nid] < DORMANCY_THRESHOLD) {
         toDormant.push(nid);
       } else {
@@ -1408,10 +1472,10 @@ function performDeepAnalysis() {
     const avgH = (higgsVals.reduce((s, h) => s + h, 0) / higgsVals.length).toFixed(4);
     const expanding = higgsVals.filter(h => h > 0.2).length;
     const critical = higgsVals.filter(h => h > -0.2 && h <= 0.2).length;
-    const contracting = higgsVals.filter(h => h <= -0.2).length;
+    const contract = higgsVals.filter(h => h <= -0.2).length;
     const resonanceLinks = glyphLog.filter(g => g.resonance_src != null).length;
     html += `<div style="margin-bottom:8px;"><b style="color:var(--yellow)">Higgs Field</b><br>`;
-    html += `Avg: ${avgH} | Expanding: ${expanding} | Critical: ${critical} | Contracting: ${contracting}<br>`;
+    html += `Avg: ${avgH} | Expanding: ${expanding} | Critical: ${critical} | Contract: ${contract}<br>`;
     html += `Resonant Links: ${resonanceLinks}</div>`;
   }
 
@@ -1466,21 +1530,62 @@ function performDeepAnalysis() {
 }
 
 // ===== LOGGING =====
-const MAX_LOG_ENTRIES = 200;
+const MAX_LOG_ENTRIES = 300;
 let logEntries = [];
+let activeLogFilter = 'all';
 
 function addLog(msg, type) {
-  logEntries.push({ msg, type, gen: generationCount });
+  // Auto-classify spawn entries if no type given
+  if (!type && msg.includes('class="id"')) type = 'spawn';
+  if (!type && msg.includes('Pruned')) type = 'prune';
+  logEntries.push({ msg, type: type || 'info', gen: generationCount });
   if (logEntries.length > MAX_LOG_ENTRIES) logEntries.shift();
+}
+
+function toggleLogFilter(btn, filter) {
+  activeLogFilter = filter;
+  document.querySelectorAll('#log-filter-bar button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderLog();
+}
+
+// Make glyph IDs in log messages clickable — wraps <span class="id">XYZ</span>
+// with an onclick that inspects + focuses the node
+function linkifyLogMsg(msg) {
+  return msg.replace(
+    /<span class="id">([^<]+)<\/span>/g,
+    '<span class="id" onclick="logClickGlyph(\'$1\')">$1</span>'
+  );
+}
+
+function logClickGlyph(id) {
+  const g = id2glyph[id];
+  if (!g) return;
+  inspectGlyph({ id });
 }
 
 function renderLog() {
   const el = document.getElementById('log-container');
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-  el.innerHTML = logEntries.slice(-80).map(e =>
-    `<div class="log-entry"><span class="gen">[${e.gen}]</span> ${e.msg}</div>`
+
+  let visible = logEntries;
+  if (activeLogFilter !== 'all') {
+    visible = logEntries.filter(e => e.type === activeLogFilter);
+  }
+
+  el.innerHTML = visible.slice(-100).map(e =>
+    `<div class="log-entry" data-type="${e.type}"><span class="gen" onclick="logJumpToGen(${e.gen})">[${e.gen}]</span> ${linkifyLogMsg(e.msg)}</div>`
   ).join('');
   if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+function logJumpToGen(gen) {
+  // If snapshot slider exists, jump to that generation
+  const slider = document.getElementById('snapshot-slider');
+  if (slider) {
+    slider.value = gen;
+    slider.dispatchEvent(new Event('input'));
+  }
 }
 
 // ===== KURAMOTO COUPLING =====
@@ -1744,11 +1849,12 @@ function generationStep() {
   // Kuramoto phase coupling (every 3 gens for perf)
   if (generationCount % 3 === 0) kuramotoStep();
 
-  // Reflex test (every 10 gens)
-  if (generationCount % 10 === 0) reflexTest();
+  // Reflex test — every 20 gens, only after population has established
+  if (generationCount % 20 === 0 && glyphLog.length >= 50) reflexTest();
 
   // Prune (every 50 gens — softened to allow more growth)
-  if (generationCount % 50 === 0) pruneStagnant();
+  // Prune less frequently — every 100 gens instead of 50
+  if (generationCount % 100 === 0) pruneStagnant();
 
   // Rewire (every 25 gens)
   if (generationCount % 25 === 0) rewireShortcuts();
@@ -1871,6 +1977,7 @@ function setColorMode(mode) {
   // Force graph re-render
   if (graph3d) {
     graph3d.nodeColor(node => {
+      if (node.id === selectedNodeId) return '#ffffff';
       const g = id2glyph[node.id];
       return mode === 'higgs' ? higgsColor(g ? g.higgs : 0) : glyphColor(g);
     });
@@ -1894,9 +2001,7 @@ function engineLoop(timestamp) {
   const rate = parseInt(document.getElementById('rate-slider').value);
 
   if (timestamp - lastStepTime >= rate) {
-    // Run multiple steps per frame for faster rates
-    const steps = rate < 50 ? 5 : (rate < 100 ? 3 : 1);
-    for (let i = 0; i < steps; i++) generationStep();
+    generationStep();
     lastStepTime = timestamp;
 
     // Update UI every frame
@@ -2171,9 +2276,11 @@ function initGraph() {
     .nodeVal(node => {
       const g = id2glyph[node.id];
       const r = glyphRadius(g);
-      return r * r; // nodeVal is volume-like, so square the radius
+      const v = r * r; // nodeVal is volume-like, so square the radius
+      return node.id === selectedNodeId ? v * 4 : v;
     })
     .nodeColor(node => {
+      if (node.id === selectedNodeId) return '#ffffff';
       const g = id2glyph[node.id];
       return colorMode === 'higgs' ? higgsColor(g ? g.higgs : 0) : glyphColor(g);
     })
@@ -2208,11 +2315,15 @@ function initGraph() {
     .onNodeClick(node => {
       if (node) inspectGlyph(node);
     })
+    .onBackgroundClick(() => {
+      selectedNodeId = null;
+      if (graph3d) graph3d.nodeRelSize(graph3d.nodeRelSize());
+    })
     .graphData({ nodes: [], links: [] });
 
   // Configure the INTERNAL 3D forces — distanceMax kept under disc gap
   // so charge repulsion never crosses between discs
-  graph3d.d3Force('charge').strength(-40).distanceMax(50);
+  graph3d.d3Force('charge').strength(-40).distanceMax(80);
   graph3d.d3Force('link').id(d => d.id).distance(30).strength(0.04);
 
   scheduleGraphUpdate();
@@ -2267,11 +2378,9 @@ function updateGraphData() {
   }
 
   // Vertebrae constants (must match setView)
-  const VRT_RINGS = 8;               // concentric rings per disc
-  const VRT_RING_SPACING = 24;       // radial gap between rings (wider for larger nodes)
-  const VRT_NODES_PER_DISC = 1000;   // nodes before next disc
-  const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // 125
-  const VRT_DISC_GAP = 120;          // vertical gap between disc centers
+  const VRT_RINGS = 12;              // concentric rings per disc
+  const VRT_RING_SPACING = 40;       // radial gap between rings
+  const VRT_DISC_GAP = 300;          // vertical gap between disc centers
 
   // Sort by birth order so disc/ring assignment is stable and fills outward
   const sorted = [...recentGlyphs].sort((a, b) =>
@@ -2279,14 +2388,31 @@ function updateGraphData() {
     (parseInt(a.id.replace(/\D/g,''),10)||0) - (parseInt(b.id.replace(/\D/g,''),10)||0)
   );
 
+  // Build ring capacity proportional to circumference so nodes are evenly spaced.
+  // Min arc spacing of 18 units → ~1000 nodes per disc across 12 rings.
+  const MIN_ARC = 18;
+  const ringCapacity = [];
+  let totalCap = 0;
+  for (let r = 0; r < VRT_RINGS; r++) {
+    const radius = (r + 1) * VRT_RING_SPACING;
+    const cap = Math.max(4, Math.floor(2 * Math.PI * radius / MIN_ARC));
+    ringCapacity.push(cap);
+    totalCap += cap;
+  }
+
   // Assign each glyph a sequential index → disc, ring, slot
   sorted.forEach((g, i) => {
-    const disc = Math.floor(i / VRT_NODES_PER_DISC);
-    const indexInDisc = i % VRT_NODES_PER_DISC;
-    const ring = Math.floor(indexInDisc / VRT_NODES_PER_RING);
-    const slot = indexInDisc % VRT_NODES_PER_RING;
+    const disc = Math.floor(i / totalCap);
+    let indexInDisc = i % totalCap;
+    let ring = 0;
+    while (ring < VRT_RINGS - 1 && indexInDisc >= ringCapacity[ring]) {
+      indexInDisc -= ringCapacity[ring];
+      ring++;
+    }
+    const slot = indexInDisc;
+    const slotsInRing = ringCapacity[ring];
     const r = (ring + 1) * VRT_RING_SPACING;
-    const angle = slot * (2 * Math.PI / VRT_NODES_PER_RING) + ring * 0.3;
+    const angle = slot * (2 * Math.PI / slotsInRing) + ring * 0.3;
 
     g._ringR = r;
     g._ringAngle = angle;
@@ -2317,7 +2443,7 @@ function updateGraphData() {
   });
 
   // Performance cap
-  const cappedLinks = links.length > 1500 ? links.slice(-1500) : links;
+  const cappedLinks = links.length > 3000 ? links.slice(-3000) : links;
 
   const prevCount = currentGraphData.nodes.length;
   const prevLinkCount = currentGraphData.links ? currentGraphData.links.length : 0;
@@ -2363,6 +2489,8 @@ function hideTooltip() {
 function inspectGlyph(node) {
   const g = id2glyph[node.id];
   if (!g) return;
+  selectedNodeId = node.id;
+  if (graph3d) graph3d.nodeRelSize(graph3d.nodeRelSize()); // lightweight color refresh
   switchTab('inspector');
 
   const children = getChildren(g);
@@ -2414,14 +2542,6 @@ function inspectGlyph(node) {
     </div>
   `;
 
-  // Focus camera on clicked node
-  const distance = 120;
-  const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
-  graph3d.cameraPosition(
-    { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
-    node,
-    1000
-  );
 }
 
 // ===== VIEW MODE =====
@@ -2433,10 +2553,10 @@ function setView(mode) {
   if (!graph3d) return;
 
   // Vertebrae spine: position forces pin nodes firmly to targets.
-  // Charge distanceMax must be well under VRT_DISC_GAP (120) so
+  // Charge distanceMax must be well under VRT_DISC_GAP (300) so
   // nodes on different discs never repel each other across the gap.
-  graph3d.d3Force('charge').strength(-8).distanceMax(50);
-  graph3d.d3Force('link').distance(18).strength(0.01);
+  graph3d.d3Force('charge').strength(-18).distanceMax(60);
+  graph3d.d3Force('link').distance(30).strength(0.008);
   graph3d.d3Force('radial', null);
 
   // Pin nodes to ring positions on x/z plane — strong pull eliminates drift
