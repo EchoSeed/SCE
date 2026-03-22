@@ -2053,29 +2053,47 @@ function setView(mode) {
 
   if (!graph3d) return;
 
-  // Concentric: rings by generation, low entropy center / high entropy outer
+  // Concentric: rings by generation, capped at 8 rings per disc,
+  // then stack new discs vertically like vertebrae
   graph3d.d3Force('charge').strength(-100).distanceMax(600);
   graph3d.d3Force('link').distance(90).strength(0.06);
 
-  const RING_GENS = 50;
-  const GEN_SPACING = 100;
+  const RING_GENS = 50;        // generations per ring
+  const GEN_SPACING = 100;     // radial distance between rings
   const ENTROPY_SCALE = 0.6;
+  const MAX_RINGS = 8;         // rings per disc before stacking
+  const DISC_Y_SPACING = 350;  // vertical gap between stacked discs
 
-  // Radial force — generation sets the ring, entropy pushes outward
+  // Radial force — ring index wraps at MAX_RINGS per disc
   graph3d.d3Force('radial', d3.forceRadial(d => {
     const g = id2glyph[d.id];
     if (!g) return 120;
     const gen = g.generationBorn || 0;
     const bucket = Math.floor(gen / RING_GENS);
+    const ringInDisc = bucket % MAX_RINGS;
     const entropyRadius = (g.entropy || 0) * ENTROPY_SCALE;
-    return (bucket + 1) * GEN_SPACING + entropyRadius;
+    return (ringInDisc + 1) * GEN_SPACING + entropyRadius;
   }, 0, 0).strength(0.5));
 
-  // Spread on z-axis by generation so rings stack into a helix
+  // Y-axis: which disc (vertebra) this node belongs to
+  graph3d.d3Force('posY', d3.forceY(d => {
+    const g = id2glyph[d.id];
+    if (!g) return 0;
+    const gen = g.generationBorn || 0;
+    const bucket = Math.floor(gen / RING_GENS);
+    const disc = Math.floor(bucket / MAX_RINGS);
+    return disc * DISC_Y_SPACING;
+  }).strength(0.35));
+
+  // Gentle z-spread within each disc so rings aren't perfectly flat
   graph3d.d3Force('posZ', d3.forceZ(d => {
     const g = id2glyph[d.id];
-    return g ? ((g.generationBorn || 0) % 200) * 1.4 - 140 : 0;
-  }).strength(0.1));
+    if (!g) return 0;
+    const gen = g.generationBorn || 0;
+    const bucket = Math.floor(gen / RING_GENS);
+    const ringInDisc = bucket % MAX_RINGS;
+    return ringInDisc * 12 - (MAX_RINGS * 6);
+  }).strength(0.06));
 
   graph3d.d3ReheatSimulation();
 }
