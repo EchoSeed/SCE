@@ -1560,7 +1560,7 @@ function linkifyLogMsg(msg) {
 function logClickGlyph(id) {
   const g = id2glyph[id];
   if (!g) return;
-  inspectGlyph({ id });
+  inspectGlyph({ id }, { switchToTab: false });
   // Focus camera on the node
   if (graph3d) {
     const node = currentGraphData.nodes.find(n => n.id === id);
@@ -2490,10 +2490,10 @@ function hideTooltip() {
 
 // ── Inspector (click on node) ──
 
-function inspectGlyph(node) {
+function inspectGlyph(node, { switchToTab = true } = {}) {
   const g = id2glyph[node.id];
   if (!g) return;
-  switchTab('inspector');
+  if (switchToTab) switchTab('inspector');
 
   const children = getChildren(g);
   const inf = calculateInfluence(g);
