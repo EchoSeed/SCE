@@ -2135,10 +2135,10 @@ function edgeThickness(sourceGlyph, targetGlyph) {
 }
 
 function glyphRadius(g) {
-  if (!g) return 4;
-  const base = 3;
-  if (conceptualAttractors[g.id]) return base + 5;
-  return base + Math.min(5, g.entropy / 100);
+  if (!g) return 6;
+  const base = 6;
+  if (conceptualAttractors[g.id]) return base + 6;
+  return base + Math.min(6, g.entropy / 80);
 }
 
 // ── Init ──
@@ -2176,9 +2176,9 @@ function initGraph() {
       const tId = typeof link.target === 'object' ? link.target.id : link.target;
       return edgeThickness(id2glyph[sId], id2glyph[tId]);
     })
-    // Alpha config — high velocity decay kills bounce/oscillation
-    .d3AlphaDecay(0.05)
-    .d3VelocityDecay(0.8)
+    // Alpha config — fast cooldown + moderate drag for smooth settling
+    .d3AlphaDecay(0.12)
+    .d3VelocityDecay(0.55)
     // Interactions
     .onNodeHover(node => {
       const el = document.getElementById('3d-graph');
@@ -2246,12 +2246,12 @@ function updateGraphData() {
   // Build nodes — preserve existing positions, seed new ones for vertebrae layout
   const existingById = {};
   for (const n of currentGraphData.nodes) {
-    existingById[n.id] = { x: n.x, y: n.y, z: n.z };
+    existingById[n.id] = { x: n.x, y: n.y, z: n.z, vx: n.vx, vy: n.vy, vz: n.vz };
   }
 
   // Vertebrae constants (must match setView)
   const VRT_RINGS = 8;               // concentric rings per disc
-  const VRT_RING_SPACING = 18;       // radial gap between rings
+  const VRT_RING_SPACING = 24;       // radial gap between rings (wider for larger nodes)
   const VRT_NODES_PER_DISC = 1000;   // nodes before next disc
   const VRT_NODES_PER_RING = Math.ceil(VRT_NODES_PER_DISC / VRT_RINGS); // 125
   const VRT_DISC_GAP = 120;          // vertical gap between disc centers
@@ -2282,6 +2282,8 @@ function updateGraphData() {
 
     if (existing) {
       node.x = existing.x; node.y = existing.y; node.z = existing.z;
+      // Preserve velocity to avoid positional snapping
+      node.vx = existing.vx || 0; node.vy = existing.vy || 0; node.vz = existing.vz || 0;
     } else {
       node.x = Math.cos(g._ringAngle) * g._ringR;
       node.z = Math.sin(g._ringAngle) * g._ringR;
@@ -2293,8 +2295,16 @@ function updateGraphData() {
   // Performance cap
   const cappedLinks = links.length > 1500 ? links.slice(-1500) : links;
 
+  const prevCount = currentGraphData.nodes.length;
   currentGraphData = { nodes, links: cappedLinks };
   graph3d.graphData(currentGraphData);
+
+  // Only gently warm the simulation when new nodes appear — skip full reheat
+  if (nodes.length > prevCount && graph3d.d3Force) {
+    const sim = graph3d.d3Force('link') && graph3d.d3Force('link').links && graph3d;
+    // Nudge alpha just enough to settle new nodes, not shake existing ones
+    try { graph3d.d3AlphaTarget(0.08).d3AlphaTarget(0); } catch (_) {}
+  }
 }
 
 // ── Tooltip (adapted for 3D hover) ──
@@ -2403,8 +2413,8 @@ function setView(mode) {
   // Vertebrae spine: position forces pin nodes to their targets,
   // minimal charge just prevents overlap. High velocityDecay (0.8)
   // on the simulation kills any bounce.
-  graph3d.d3Force('charge').strength(-5).distanceMax(80);
-  graph3d.d3Force('link').distance(10).strength(0.01);
+  graph3d.d3Force('charge').strength(-8).distanceMax(120);
+  graph3d.d3Force('link').distance(18).strength(0.01);
   graph3d.d3Force('radial', null);
 
   // Pin nodes to ring positions on x/z plane
@@ -2427,7 +2437,8 @@ function setView(mode) {
     return g._discY || 0;
   }).strength(0.8));
 
-  graph3d.d3ReheatSimulation();
+  // Gentle warmup instead of full reheat to avoid visual jerk
+  try { graph3d.d3AlphaTarget(0.15).d3AlphaTarget(0); } catch (_) {}
 }
 
 // ===== TAB SWITCHING =====
